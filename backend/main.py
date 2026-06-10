@@ -11,7 +11,6 @@ from services.rag import (
     index
 )
 
-#model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cuda")
 
 app = FastAPI()
 document_text = ""
@@ -51,7 +50,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             text += page_text + "\n"
     
     document_text = text
-    #print("PDF characters:", len(document_text))
+
     
     print("FAISS index built successfully")
     chunks = chunk_text(document_text)
@@ -91,13 +90,14 @@ def chat_endpoint(request: ChatRequest):
 
     context = "\n\n".join(results)
 
-    # Add current user message to history
+    
     chat_history.append({
         "role": "user",
         "content": request.message
     })
+    chat_history = chat_history[-10:]
 
-    # Build messages for Ollama
+    
     messages = [
         {
             "role": "system",
@@ -117,7 +117,7 @@ Rules:
         }
     ]
 
-    # Keep last 10 messages
+  
     messages.extend(chat_history[-10:])
 
     print("\nCHAT HISTORY SENT TO QWEN:")
@@ -138,76 +138,8 @@ Rules:
     print("\nCurrent Chat History:")
     print(chat_history)
 
+    
     return {
-        "reply": response.message.content
+        "reply": response.message.content,
+        "sources": results
     }
-    
-    
-    
-    
-    
-    
-    
-    
-# @app.post("/chat")
-# def chat_endpoint(request: ChatRequest):
-    
-#     global document_text
-    
-#     prompt = f"""
-# You are a PDF assistant.
-
-# Answer ONLY from the document below.
-
-# DOCUMENT:
-# {document_text}
-
-# QUESTION:
-# {request.message}
-# """
-
-#     response = chat(
-#          model="qwen2.5:7b",
-#         messages=[
-#             {
-#                 "role": "user",
-#                 "content": prompt   
-#             }
-#         ]
-#     )
-#     print(type(response))
-#     print(response)
-
-#     return {
-#         "reply": str(response)
-#     }
-
-
-# @app.post("/chat")
-# def chat_endpoint(request: ChatRequest):
-#     return {
-#         "reply": "Backend is working"
-#     }
-# 
-from ollama import chat
-
-# @app.post("/chat")  
-# def chat_endpoint(request: ChatRequest):
-    
-#     response = chat(
-#         model="qwen2.5:7b",
-#         messages=[
-#             {
-#                 "role": "user",
-#                 "content": "Say hello"
-#             }
-#         ]
-#     )
-
-#     print(response)
-
-#     return {
-#         "reply": response.message.content
-#     }
-
-    
