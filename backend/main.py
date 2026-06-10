@@ -3,10 +3,19 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from pypdf import PdfReader
 from ollama import chat
+from sentence_transformers import SentenceTransformer
+from services.rag import (
+    chunk_text,
+    build_index,
+    search,
+    index
+)
+
+#model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cuda")
 
 app = FastAPI()
 document_text = ""
-
+chat_history = []
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,39 +32,13 @@ class ChatRequest(BaseModel):
 def home():
     return {"message": "Backend is running"}
 
-# @app.post("/chat")
-# def chat_endpoint(request: ChatRequest):
-#     return {
-#         "reply": "Backend is working"
-#     }
-# 
-from ollama import chat
 
-# @app.post("/chat")  
-# def chat_endpoint(request: ChatRequest):
-    
-#     response = chat(
-#         model="qwen2.5:7b",
-#         messages=[
-#             {
-#                 "role": "user",
-#                 "content": "Say hello"
-#             }
-#         ]
-#     )
-
-#     print(response)
-
-#     return {
-#         "reply": response.message.content
-#     }
-
-    
     
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     
     global document_text
+    
     
     pdf = PdfReader(file.file)
     
@@ -69,6 +52,13 @@ async def upload_pdf(file: UploadFile = File(...)):
     
     document_text = text
     #print("PDF characters:", len(document_text))
+    
+    print("FAISS index built successfully")
+    chunks = chunk_text(document_text)
+    
+    print("Total Chunks",len(chunks))
+    
+    build_index(chunks)
             
     return {
          "Message": "PDF uploaded successfully",
@@ -76,6 +66,89 @@ async def upload_pdf(file: UploadFile = File(...)):
 }
 
 
+
+@app.post("/chat")
+def chat_endpoint(request: ChatRequest):
+
+    global chat_history
+
+    print("CHAT ROUTE EXECUTED")
+    print("\nQuestion:", request.message)
+
+    try:
+        results = search(request.message, k=2)
+
+    except Exception as e:
+        return {
+            "reply": str(e)
+        }
+
+    print("\nRetrieved Chunks:")
+
+    for chunk in results:
+        print("-" * 50)
+        print(chunk)
+
+    context = "\n\n".join(results)
+
+    # Add current user message to history
+    chat_history.append({
+        "role": "user",
+        "content": request.message
+    })
+
+    # Build messages for Ollama
+    messages = [
+        {
+            "role": "system",
+            "content": f"""
+You are a PDF assistant.
+
+Use the conversation history and the provided context.
+
+Context:
+{context}
+
+Rules:
+- Answer only from the context.
+- Do not use LaTeX.
+- Write equations in plain text.
+"""
+        }
+    ]
+
+    # Keep last 10 messages
+    messages.extend(chat_history[-10:])
+
+    print("\nCHAT HISTORY SENT TO QWEN:")
+    for msg in messages:
+        print(msg)
+
+    response = chat(
+        model="qwen2.5:7b",
+        messages=messages
+    )
+
+    # Save assistant response
+    chat_history.append({
+        "role": "assistant",
+        "content": response.message.content
+    })
+
+    print("\nCurrent Chat History:")
+    print(chat_history)
+
+    return {
+        "reply": response.message.content
+    }
+    
+    
+    
+    
+    
+    
+    
+    
 # @app.post("/chat")
 # def chat_endpoint(request: ChatRequest):
     
@@ -109,35 +182,32 @@ async def upload_pdf(file: UploadFile = File(...)):
 #         "reply": str(response)
 #     }
 
-@app.post("/chat")
-def chat_endpoint(request: ChatRequest):
-    print("CHAT ROUTE EXECUTED")
-    global document_text
+
+# @app.post("/chat")
+# def chat_endpoint(request: ChatRequest):
+#     return {
+#         "reply": "Backend is working"
+#     }
+# 
+from ollama import chat
+
+# @app.post("/chat")  
+# def chat_endpoint(request: ChatRequest):
     
-    prompt = f"""
-You are a PDF assistant.
+#     response = chat(
+#         model="qwen2.5:7b",
+#         messages=[
+#             {
+#                 "role": "user",
+#                 "content": "Say hello"
+#             }
+#         ]
+#     )
 
-Answer ONLY from the document below.
+#     print(response)
 
-DOCUMENT:
-{document_text}
+#     return {
+#         "reply": response.message.content
+#     }
 
-QUESTION:
-{request.message}
-"""
-    print("Document length in chat:", len(document_text))
-    print("Question:", request.message)
-    print(prompt[:500])
-    response = chat(
-        model="qwen2.5:7b",
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
-    )
-    print(response.message.content)
-    return {
-        "reply": response.message.content
-    }
+    
