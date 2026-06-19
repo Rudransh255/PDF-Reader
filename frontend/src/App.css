@@ -19,6 +19,42 @@
 
 * { box-sizing: border-box; }
 
+.helper-body, .chat-scroll, .note-scroll, .notebook-area, .reader-results {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+
+.helper-body::-webkit-scrollbar,
+.chat-scroll::-webkit-scrollbar,
+.note-scroll::-webkit-scrollbar,
+.notebook-area::-webkit-scrollbar,
+.reader-results::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.helper-body::-webkit-scrollbar-track,
+.chat-scroll::-webkit-scrollbar-track,
+.note-scroll::-webkit-scrollbar-track,
+.notebook-area::-webkit-scrollbar-track,
+.reader-results::-webkit-scrollbar-track {
+  background: transparent;
+}
+.helper-body::-webkit-scrollbar-thumb,
+.chat-scroll::-webkit-scrollbar-thumb,
+.note-scroll::-webkit-scrollbar-thumb,
+.notebook-area::-webkit-scrollbar-thumb,
+.reader-results::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 8px;
+}
+.helper-body::-webkit-scrollbar-thumb:hover,
+.chat-scroll::-webkit-scrollbar-thumb:hover,
+.note-scroll::-webkit-scrollbar-thumb:hover,
+.notebook-area::-webkit-scrollbar-thumb:hover,
+.reader-results::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
 .app {
   min-height: 100vh;
   background:
@@ -31,7 +67,6 @@
   margin: 0 auto;
 }
 
-/* ---------- top bar ---------- */
 .topbar {
   display: flex; justify-content: space-between; align-items: flex-start;
   gap: 16px; padding: 6px 8px 22px;
@@ -55,6 +90,7 @@
   border: 1px solid var(--line); margin-left: 6px;
 }
 .doc-status { margin: 4px 0 0; font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.doc-status.err { color: var(--red); }
 
 .top-actions { display: flex; gap: 10px; align-items: center; }
 .filepick {
@@ -65,7 +101,6 @@
 }
 .filepick input { display: none; }
 
-/* ---------- buttons ---------- */
 .btn {
   font-family: var(--sans); font-size: 13px; font-weight: 600;
   border-radius: 10px; padding: 10px 16px; cursor: pointer;
@@ -81,7 +116,6 @@
 .btn.sm { padding: 7px 12px; font-size: 12px; }
 .btn.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
 
-/* ---------- columns ---------- */
 .columns {
   display: grid; grid-template-columns: 0.95fr 1.5fr 1.1fr; gap: 18px;
   align-items: stretch;
@@ -98,7 +132,6 @@
   letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim);
 }
 
-/* ---------- segmented control ---------- */
 .seg {
   display: flex; gap: 4px; padding: 4px; border-radius: 12px;
   background: var(--panel-2); border: 1px solid var(--line); margin-bottom: 14px;
@@ -122,7 +155,6 @@
 .hint { color: var(--text-dim); font-size: 14px; line-height: 1.5; margin: 4px 0; }
 .hint.sm { font-size: 13px; }
 
-/* ---------- quiz ---------- */
 .quiz-card {
   background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 12px; padding: 14px;
@@ -150,7 +182,6 @@
 }
 .link-btn:hover { text-decoration: underline; }
 
-/* ---------- flashcard ---------- */
 .flashcard { perspective: 1200px; height: 190px; cursor: pointer; }
 .flash-inner {
   position: relative; width: 100%; height: 100%;
@@ -173,7 +204,6 @@
 .flash-nav { display: flex; align-items: center; justify-content: space-between; }
 .flash-count { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
 
-/* ---------- shared inputs ---------- */
 .title-input, .chat-input input {
   width: 100%; background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 10px; padding: 11px 13px; color: var(--text); font-size: 13px;
@@ -183,11 +213,13 @@
   outline: none; border-color: var(--accent);
 }
 
-/* ---------- center chat ---------- */
 .chat-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px; }
 .bubble { max-width: 85%; padding: 11px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
 .bubble.user { align-self: flex-end; background: var(--accent); color: #fff; }
 .bubble.bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); }
+.mathtext { white-space: pre-wrap; }
+.mathtext .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
+.mathtext .katex { font-size: 1.05em; }
 .suggest-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 .chip {
   background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
@@ -201,7 +233,6 @@
 }
 .send:disabled { opacity: 0.45; }
 
-/* ---------- notebook ---------- */
 .field-label { font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
 .title-input { margin-bottom: 12px; }
 
@@ -231,11 +262,9 @@
 }
 .notebook-area mark { background: #5b4a9e; }
 
-/* notebook scroll wrapper holds saved items + editor */
 .note-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .panel-head.row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
-/* saved item cards */
 .saved-list { display: flex; flex-direction: column; gap: 10px; }
 .saved-item {
   position: relative; background: var(--panel-2); border: 1px solid var(--line);
@@ -253,7 +282,29 @@
 .saved-opts { margin: 0; padding-left: 18px; font-size: 13px; }
 .saved-opts li { margin: 2px 0; }
 .saved-opts li.right { color: #6ee7a0; font-weight: 600; }
-.saved-img { width: 100%; border-radius: 8px; display: block; }
+.saved-img { width: 100%; border-radius: 8px; display: block; cursor: zoom-in; transition: opacity 0.15s; }
+.saved-img:hover { opacity: 0.85; }
+.saved-img-loading {
+  padding: 18px; text-align: center; color: var(--text-dim); font-size: 13px;
+  background: var(--panel); border: 1px dashed var(--line); border-radius: 8px;
+}
+
+.lightbox {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(5, 7, 12, 0.88); backdrop-filter: blur(4px);
+  display: grid; place-items: center; padding: 40px; cursor: zoom-out;
+}
+.lightbox img {
+  max-width: 92vw; max-height: 88vh; border-radius: 12px; cursor: default;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.lightbox-close {
+  position: absolute; top: 22px; right: 26px; width: 40px; height: 40px;
+  border-radius: 50%; border: 1px solid var(--line); background: var(--panel);
+  color: var(--text-hi); font-size: 22px; cursor: pointer; line-height: 1;
+  display: grid; place-items: center;
+}
+.lightbox-close:hover { border-color: var(--accent); }
 .saved-remove {
   position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 6px;
   border: 1px solid var(--line); background: var(--panel); color: var(--text-dim);
@@ -261,7 +312,6 @@
 }
 .saved-remove:hover { border-color: var(--red); color: var(--red); }
 
-/* save-answer button inside chat bubbles */
 .bubble-save {
   margin-top: 8px; background: none; border: none; color: var(--accent);
   cursor: pointer; font-size: 12px; font-weight: 600; padding: 0;

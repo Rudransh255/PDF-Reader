@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from "react";
+import DOMPurify from "dompurify";
 import "./App.css";
 
-const API = "http://127.0.0.1:8000";
+const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
-// ---- localStorage persistence ----
 const LS_KEY = "pdfBuddyNotebook";
 const loadSaved = () => {
   try {
@@ -15,74 +15,199 @@ const loadSaved = () => {
 };
 const _persisted = typeof window !== "undefined" ? loadSaved() : null;
 
+const LS_CHAT = "pdfBuddyChat";
+const loadChat = () => {
+  try {
+    const raw = localStorage.getItem(LS_CHAT);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+const _persistedChat = typeof window !== "undefined" ? loadChat() : null;
+
+const IDB_NAME = "pdfBuddyImages";
+const IDB_STORE = "images";
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbPutImage(id, dataUrl) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).put(dataUrl, id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function idbGetImage(id) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const req = tx.objectStore(IDB_STORE).get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbDeleteImage(id) {
+  const db = await idbOpen();
+  return new Promise((resolve) => {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+}
+
+function MathText({ text }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.textContent = text || "";
+
+    if (window.renderMathInElement) {
+      try {
+        window.renderMathInElement(el, {
+          delimiters: [
+            { left: "\\[", right: "\\]", display: true },
+            { left: "\\(", right: "\\)", display: false },
+            { left: "$$", right: "$$", display: true },
+          ],
+          throwOnError: false,
+        });
+      } catch {
+
+      }
+    }
+  }, [text]);
+  return <div ref={ref} className="mathtext" />;
+}
+
 export default function App() {
-  // ---- shared document state ----
+
   const [file, setFile] = useState(null);
   const [pdfLoaded, setPdfLoaded] = useState(false);
   const [pageCount, setPageCount] = useState(1);
   const [uploadStatus, setUploadStatus] = useState("No PDF loaded");
+  const [uploadError, setUploadError] = useState(false);
 
-  // ---- helper panel ----
-  const [helperTab, setHelperTab] = useState("quiz"); // quiz | flashcards
+  const [helperTab, setHelperTab] = useState("quiz");
 
-  // ---- quiz state ----
-  const [quiz, setQuiz] = useState([]); // [{question, options:[], answer:index}]
+  const [quiz, setQuiz] = useState([]);
   const [quizLoading, setQuizLoading] = useState(false);
-  const [picked, setPicked] = useState({}); // {questionIndex: optionIndex}
+  const [picked, setPicked] = useState({});
 
-  // ---- flashcard state ----
-  const [cards, setCards] = useState([]); // [{question, answer}]
+  const [cards, setCards] = useState([]);
   const [cardLoading, setCardLoading] = useState(false);
   const [cardIndex, setCardIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
 
-  // ---- AI agent ----
   const [message, setMessage] = useState("");
-  const [chat, setChat] = useState([]); // [{role, content}]
+  const [chat, setChat] = useState(_persistedChat?.chat ?? []);
   const [chatLoading, setChatLoading] = useState(false);
-  const [lastQuestion, setLastQuestion] = useState(""); // seeds quiz/flashcards
+  const [lastQuestion, setLastQuestion] = useState(_persistedChat?.lastQuestion ?? "");
 
-  // ---- notebook (persisted in localStorage) ----
+  const [staleChat, setStaleChat] = useState((_persistedChat?.chat ?? []).length > 0);
+
   const [notebookTitle, setNotebookTitle] = useState(_persisted?.title ?? "Research Notebook");
   const [notebook, setNotebook] = useState(_persisted?.notes ?? "");
   const [activeFormats, setActiveFormats] = useState({});
-  const [savedItems, setSavedItems] = useState(_persisted?.items ?? []); // [{id, type, ...}]
+  const [savedItems, setSavedItems] = useState(_persisted?.items ?? []);
   const notebookRef = useRef(null);
   const imageInputRef = useRef(null);
+  const [lightbox, setLightbox] = useState(null);
 
-  // restore the editor's saved HTML into the contentEditable div on first mount
   useEffect(() => {
     if (notebookRef.current && notebook) {
-      notebookRef.current.innerHTML = notebook;
+      notebookRef.current.innerHTML = DOMPurify.sanitize(notebook);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, []);
 
-  // persist notebook to localStorage whenever title, notes, or items change
   useEffect(() => {
     try {
+      const itemsForStorage = savedItems.map((it) =>
+        it.type === "image" ? { id: it.id, type: "image", name: it.name, imgId: it.imgId } : it
+      );
       localStorage.setItem(
         LS_KEY,
-        JSON.stringify({ title: notebookTitle, notes: notebook, items: savedItems })
+        JSON.stringify({ title: notebookTitle, notes: notebook, items: itemsForStorage })
       );
     } catch (e) {
-      // storage full (likely too many/large images) — fail quietly
       console.warn("Could not save notebook to localStorage:", e);
     }
   }, [notebookTitle, notebook, savedItems]);
 
-  // ---------- backend calls ----------
+  useEffect(() => {
+    const imageItems = (_persisted?.items ?? []).filter((it) => it.type === "image" && it.imgId);
+    if (imageItems.length === 0) return;
+    (async () => {
+      for (const it of imageItems) {
+        try {
+          const src = await idbGetImage(it.imgId);
+          if (src) {
+            setSavedItems((s) => s.map((x) => (x.id === it.id ? { ...x, src } : x)));
+          }
+        } catch {
+
+        }
+      }
+    })();
+
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_CHAT, JSON.stringify({ chat, lastQuestion }));
+    } catch (e) {
+      console.warn("Could not save chat to localStorage:", e);
+    }
+  }, [chat, lastQuestion]);
+
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e) => { if (e.key === "Escape") setLightbox(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox]);
+
   const uploadPdf = async () => {
     if (!file) {
-      setUploadStatus("Pick a PDF first, then upload");
+      setUploadError(true);
+      setUploadStatus("No PDF selected — choose a PDF first, then click Upload.");
       return;
     }
+
+    if (file.size > 60 * 1024 * 1024) {
+      setUploadError(true);
+      setUploadStatus("PDF is too large (max 60 MB). Please choose a smaller file.");
+      return;
+    }
+    setUploadError(false);
     setUploadStatus("Uploading…");
     const formData = new FormData();
     formData.append("file", file);
     try {
       const res = await fetch(`${API}/upload`, { method: "POST", body: formData });
       const data = await res.json();
+      if (!res.ok) {
+        setUploadError(true);
+        setUploadStatus(data.error || "Upload failed.");
+        return;
+      }
       setPdfLoaded(true);
       if (data.pages) setPageCount(data.pages);
       let note = `${file.name} loaded · ${data.characters ?? 0} characters`;
@@ -91,8 +216,8 @@ export default function App() {
       else if (data.method === "empty") note += ` · no text found`;
       if (data.warning) note += ` · ${data.warning}`;
       setUploadStatus(note);
-      // reset derived content
-      setQuiz([]); setCards([]); setChat([]);
+
+      setQuiz([]); setCards([]); setChat([]); setLastQuestion(""); setStaleChat(false);
     } catch {
       setUploadStatus("Upload failed. Is the backend running on port 8000?");
     }
@@ -101,7 +226,7 @@ export default function App() {
   const reset = () => {
     setFile(null); setPdfLoaded(false); setPageCount(1);
     setUploadStatus("No PDF loaded");
-    setQuiz([]); setCards([]); setChat([]);
+    setQuiz([]); setCards([]); setChat([]); setLastQuestion(""); setStaleChat(false);
     setPicked({}); setCardIndex(0); setFlipped(false);
   };
 
@@ -143,7 +268,7 @@ export default function App() {
     if (!message.trim()) return;
     const q = message;
     setChat((c) => [...c, { role: "user", content: q }]);
-    setLastQuestion(q); // seed quiz/flashcards with this topic
+    setLastQuestion(q);
     setMessage(""); setChatLoading(true);
     try {
       const res = await fetch(`${API}/chat`, {
@@ -159,7 +284,6 @@ export default function App() {
     setChatLoading(false);
   };
 
-  // ---------- notebook helpers ----------
   const syncNotebook = () => {
     if (notebookRef.current) setNotebook(notebookRef.current.innerHTML);
   };
@@ -168,7 +292,12 @@ export default function App() {
   const newId = () => `${Date.now()}-${_idc++}-${Math.random().toString(36).slice(2, 6)}`;
 
   const addSavedItem = (item) => setSavedItems((s) => [...s, { id: newId(), ...item }]);
-  const removeSavedItem = (id) => setSavedItems((s) => s.filter((it) => it.id !== id));
+  const removeSavedItem = (id) =>
+    setSavedItems((s) => {
+      const item = s.find((it) => it.id === id);
+      if (item?.type === "image" && item.imgId) idbDeleteImage(item.imgId);
+      return s.filter((it) => it.id !== id);
+    });
 
   const importQuizQuestion = (qi) => {
     const item = quiz[qi];
@@ -186,7 +315,7 @@ export default function App() {
 
   const importAnswer = (idx) => {
     const a = chat[idx];
-    // pair with the preceding user question if present
+
     const q = idx > 0 && chat[idx - 1].role === "user" ? chat[idx - 1].content : "";
     addSavedItem({ type: "answer", question: q, answer: a.content });
   };
@@ -194,21 +323,30 @@ export default function App() {
   const onPickImage = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    // base64 inflates ~33%; localStorage caps near 5MB total, so warn on big files
-    if (f.size > 2 * 1024 * 1024) {
-      const ok = window.confirm(
-        "This image is over 2MB. Large images may not save permanently " +
-        "(browser storage is limited). Add it anyway?"
-      );
-      if (!ok) { e.target.value = ""; return; }
+    const MB = 1024 * 1024;
+
+    if (f.size > 10 * MB) {
+      window.alert("Image is too large (max 10 MB). Please choose a smaller image.");
+      e.target.value = "";
+      return;
     }
     const reader = new FileReader();
-    reader.onload = () => addSavedItem({ type: "image", src: reader.result, name: f.name });
+    reader.onload = async () => {
+      const src = reader.result;
+      const imgId = newId();
+
+      try {
+        await idbPutImage(imgId, src);
+      } catch (err) {
+        console.warn("Could not save image to IndexedDB:", err);
+      }
+
+      addSavedItem({ type: "image", src, name: f.name, imgId });
+    };
     reader.readAsDataURL(f);
-    e.target.value = ""; // allow re-picking same file
+    e.target.value = "";
   };
 
-  // walk up from selection; return the highlight element if we're inside one
   const highlightNodeAt = (point) => {
     const sel = window.getSelection();
     const start = point || (sel && sel.anchorNode);
@@ -219,7 +357,7 @@ export default function App() {
       if (node.nodeType === 1) {
         const bg = node.style?.backgroundColor || "";
         if (node.tagName === "MARK") return node;
-        if (bg && /91, *74, *158/.test(bg)) return node; // #5b4a9e in rgb
+        if (bg && /91, *74, *158/.test(bg)) return node;
       }
       node = node.parentNode;
     }
@@ -228,7 +366,6 @@ export default function App() {
 
   const inHighlight = () => !!highlightNodeAt();
 
-  // read which formats are active at the current selection → drives toggle UI
   const refreshFormats = () => {
     const el = notebookRef.current;
     if (!el) return;
@@ -249,7 +386,6 @@ export default function App() {
     try { return document.queryCommandState(cmd); } catch { return false; }
   };
 
-  // apply real formatting to the current selection inside the editor
   const applyFormat = (kind) => {
     const el = notebookRef.current;
     if (!el) return;
@@ -257,8 +393,7 @@ export default function App() {
     if (kind === "highlight") {
       const node = highlightNodeAt();
       if (node) {
-        // cursor is inside a highlight — select the whole span and strip it,
-        // so you don't have to manually re-select the text first
+
         const sel = window.getSelection();
         if (sel.isCollapsed) {
           const range = document.createRange();
@@ -269,7 +404,7 @@ export default function App() {
         document.execCommand("styleWithCSS", false, true);
         document.execCommand("hiliteColor", false, "transparent");
         document.execCommand("backColor", false, "transparent");
-        // if it was a <mark>, removeFormat clears the tag itself
+
         document.execCommand("removeFormat");
       } else {
         document.execCommand("styleWithCSS", false, true);
@@ -291,6 +426,10 @@ export default function App() {
   const clearNotebook = () => {
     if (notebookRef.current) notebookRef.current.innerHTML = "";
     setNotebook("");
+
+    savedItems.forEach((it) => {
+      if (it.type === "image" && it.imgId) idbDeleteImage(it.imgId);
+    });
     setSavedItems([]);
   };
 
@@ -310,14 +449,13 @@ export default function App() {
   const notebookChars = notebook.replace(/<[^>]*>/g, "").length;
 
   const pickOption = (qi, oi) => {
-    if (picked[qi] !== undefined) return; // lock after first pick
+    if (picked[qi] !== undefined) return;
     setPicked((p) => ({ ...p, [qi]: oi }));
   };
 
-  // ---------- render ----------
   return (
     <div className="app">
-      {/* ===== Top bar ===== */}
+      {}
       <header className="topbar">
         <div className="brand">
           <span className="logo">
@@ -338,13 +476,13 @@ export default function App() {
           </span>
           <div>
             <h1>PDF <span>Buddy</span> <em className="pages-pill">{pageCount} pages</em></h1>
-            <p className="doc-status">Active document: {uploadStatus}</p>
+            <p className={uploadError ? "doc-status err" : "doc-status"}>Active document: {uploadStatus}</p>
           </div>
         </div>
         <div className="top-actions">
           <label className="filepick">
             {file ? file.name : "Choose a PDF to begin"}
-            <input type="file" accept=".pdf" onChange={(e) => setFile(e.target.files[0])} />
+            <input type="file" accept=".pdf" onChange={(e) => { setFile(e.target.files[0]); setUploadError(false); }} />
           </label>
           <button className="btn primary" onClick={uploadPdf}>Upload PDF</button>
           <button className="btn ghost" onClick={reset}>Reset</button>
@@ -352,7 +490,7 @@ export default function App() {
       </header>
 
       <main className="columns">
-        {/* ===== LEFT: HELPER ===== */}
+        {}
         <section className="panel">
           <div className="panel-head">
             <h2 className="panel-title">Helper</h2>
@@ -363,7 +501,7 @@ export default function App() {
             <button className={helperTab === "flashcards" ? "seg-btn on" : "seg-btn"} onClick={() => setHelperTab("flashcards")}>Flashcards</button>
           </div>
 
-          {/* QUIZ */}
+          {}
           {helperTab === "quiz" && (
             <div className="helper-body">
               <button className="btn block" disabled={!pdfLoaded || quizLoading} onClick={loadQuiz}>
@@ -414,7 +552,7 @@ export default function App() {
             </div>
           )}
 
-          {/* FLASHCARDS */}
+          {}
           {helperTab === "flashcards" && (
             <div className="helper-body">
               <button className="btn block" disabled={!pdfLoaded || cardLoading} onClick={loadFlashcards}>
@@ -465,11 +603,17 @@ export default function App() {
 
         </section>
 
-        {/* ===== CENTER: AI AGENT ===== */}
+        {}
         <section className="panel">
-          <div className="panel-head">
+          <div className="panel-head row">
             <h2 className="panel-title">AI Intelligent Agent</h2>
+            {chat.length > 0 && (
+              <button className="tool-btn" onClick={() => { setChat([]); setLastQuestion(""); setStaleChat(false); }}>Clear chat</button>
+            )}
           </div>
+          {staleChat && !pdfLoaded && (
+            <p className="topic-note">Showing your previous conversation. Re-upload the PDF to ask new questions.</p>
+          )}
           <div className="chat-scroll">
             {chat.length === 0 && (
               <div className="helper-empty">
@@ -487,7 +631,7 @@ export default function App() {
             )}
             {chat.map((m, i) => (
               <div key={i} className={m.role === "user" ? "bubble user" : "bubble bot"}>
-                <div>{m.content}</div>
+                <MathText text={m.content} />
                 {m.role === "assistant" && (
                   <button className="bubble-save" onClick={() => importAnswer(i)}>+ Save answer to notebook</button>
                 )}
@@ -508,7 +652,7 @@ export default function App() {
           </div>
         </section>
 
-        {/* ===== RIGHT: NOTEBOOK ===== */}
+        {}
         <section className="panel">
           <div className="panel-head row">
             <h2 className="panel-title">My Notebook</h2>
@@ -537,7 +681,12 @@ export default function App() {
                       it.type === "answer" ? "AI Answer" : "Image"
                     }</span>
                     {it.type === "image" ? (
-                      <img className="saved-img" src={it.src} alt={it.name || "saved"} />
+                      it.src ? (
+                        <img className="saved-img" src={it.src} alt={it.name || "saved"}
+                          onClick={() => setLightbox({ src: it.src, name: it.name })} />
+                      ) : (
+                        <div className="saved-img-loading">Loading image…</div>
+                      )
                     ) : it.type === "quiz" ? (
                       <>
                         <p className="saved-q">{it.question}</p>
@@ -581,6 +730,13 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      {lightbox && (
+        <div className="lightbox" onClick={() => setLightbox(null)}>
+          <button className="lightbox-close" onClick={() => setLightbox(null)} aria-label="Close">×</button>
+          <img src={lightbox.src} alt={lightbox.name || "enlarged"} onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
     </div>
   );
 }
