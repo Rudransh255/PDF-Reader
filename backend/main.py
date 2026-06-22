@@ -18,14 +18,26 @@ MAX_UPLOAD_BYTES = 60 * 1024 * 1024
 
                                                                                  
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-_groq = OpenAI(
-    api_key=os.environ.get("GROQ_API_KEY", ""),
-    base_url="https://api.groq.com/openai/v1",
-)
+
+_groq = None
+
+
+def _get_groq():
+    global _groq
+    if _groq is None:
+        key = os.environ.get("GROQ_API_KEY", "")
+        if not key:
+            raise RuntimeError(
+                "GROQ_API_KEY is not set. Set it before starting the server "
+                "(e.g. $env:GROQ_API_KEY=\"gsk_...\" then run uvicorn)."
+            )
+        _groq = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
+    return _groq
+
 
 def llm_chat(messages):
     """Send messages to Groq and return the assistant's text content."""
-    resp = _groq.chat.completions.create(model=GROQ_MODEL, messages=messages)
+    resp = _get_groq().chat.completions.create(model=GROQ_MODEL, messages=messages)
     return resp.choices[0].message.content
 
 import logging
@@ -58,16 +70,32 @@ def home():
 
                                                                             
 def _ask_json(prompt: str):
-    """Call the LLM and pull the first JSON object/array out of the reply."""
-    raw = llm_chat(
-        [
-            {"role": "system", "content": "You output ONLY valid JSON. No markdown, no commentary."},
-            {"role": "user", "content": prompt},
-        ]
-    )
-    raw = re.sub(r"^```(json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
-    match = re.search(r"[\[{].*[\]}]", raw, re.DOTALL)
-    return json.loads(match.group(0) if match else raw)
+    """Call the LLM and return parsed JSON. Uses JSON mode + tolerant parsing."""
+    try:
+        resp = _get_groq().chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": "You output ONLY valid JSON. No markdown, no commentary."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.4,
+        )
+        raw = resp.choices[0].message.content
+    except Exception as e:
+        log.error("LLM call failed in _ask_json: %s", e)
+        raise
+
+    raw = (raw or "").strip()
+    raw = re.sub(r"^```(json)?|```$", "", raw, flags=re.MULTILINE).strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"[\[{].*[\]}]", raw, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        log.error("Could not parse JSON from model output: %r", raw[:300])
+        raise
 
 def _context_for(topic: str, k: int = 5):
     """Retrieve chunks. If a topic is given, search for it; else a generic query."""
@@ -145,9 +173,9 @@ Using ONLY the content below, write 4 multiple-choice questions.
 {focus}Each question has exactly 4 options and one correct option.
 
 Return JSON in this exact shape:
-{ "questions": [
-  { "question": "...", "options": ["A","B","C","D"], "answer": 0} 
-]} 
+{{"questions": [
+  {{"question": "...", "options": ["A","B","C","D"], "answer": 0}}
+]}}
 "answer" is the 0-based index of the correct option.
 
 Content:
@@ -180,7 +208,7 @@ Using ONLY the content below, write 6 study flashcards.
 {focus}Each card has a short question and a concise answer.
 
 Return JSON in this exact shape:
-{ "cards": [{ "question": "...", "answer": "..."} ]} 
+{{"cards": [{{"question": "...", "answer": "..."}}]}}
 
 Content:
 {context}
