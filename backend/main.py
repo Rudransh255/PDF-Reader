@@ -59,7 +59,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://pdf-buddy-red.vercel.app"],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
