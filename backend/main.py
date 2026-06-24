@@ -7,6 +7,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from openai import OpenAI
 from services.rag import (
     chunk_text,
@@ -31,7 +32,12 @@ def _get_groq():
                 "GROQ_API_KEY is not set. Set it before starting the server "
                 "(e.g. $env:GROQ_API_KEY=\"gsk_...\" then run uvicorn)."
             )
-        _groq = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
+        _groq = OpenAI(
+            api_key=key,
+            base_url="https://api.groq.com/openai/v1",
+            timeout=30.0,      # fail fast instead of hanging if Groq is slow/down
+            max_retries=2,
+        )
     return _groq
 
 
@@ -49,9 +55,10 @@ app = FastAPI()
 document_text = ""
 chat_history = []
 
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 app.add_middleware(
     CORSMiddleware,
-                                                                                      
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
@@ -259,7 +266,11 @@ Rules:
     ]
     messages.extend(chat_history[-10:])
 
-    reply = llm_chat(messages)
+    try:
+        reply = llm_chat(messages)
+    except Exception as e:
+        log.error("LLM call failed in /chat: %s", e)
+        return {"reply": "The AI service is temporarily unavailable. Please try again in a moment.", "sources": results}
 
     chat_history.append({"role": "assistant", "content": reply})
 
