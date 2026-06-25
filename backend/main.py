@@ -59,14 +59,9 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://pdf-buddy-red.vercel.app",
-        "https://pdf-reader-dun-rho.vercel.app",
-    ],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -120,10 +115,55 @@ def _context_for(topic: str, k: int = 5):
     return "\n\n".join(search(query, k=k))
 
                                                                            
+import uuid
+import threading
+
+# in-memory progress tracker: job_id -> {stage, pct, done, result/error}
+_jobs = {}
+
+
+def _process_pdf_job(job_id, tmp_path):
+    global document_text
+    try:
+        _jobs[job_id] = {"stage": "Extracting text", "pct": 35, "done": False, "error": None, "result": None}
+        result = extract_pdf_text(tmp_path)
+
+        method = result.get("method", "text")
+        if method in ("ocr", "mixed"):
+            _jobs[job_id].update({"stage": "Reading scanned pages (OCR)", "pct": 60})
+        else:
+            _jobs[job_id].update({"stage": "Text extracted", "pct": 60})
+
+        document_text = result["text"]
+
+        _jobs[job_id].update({"stage": "Building search index", "pct": 80})
+        chunks = chunk_text(document_text)
+        log.info("Extraction method: %s | OCR pages: %s | chunks: %d",
+                 result["method"], result.get("ocr_pages", 0), len(chunks))
+        build_index(chunks)
+
+        _jobs[job_id] = {
+            "stage": "Done", "pct": 100, "done": True, "error": None,
+            "result": {
+                "characters": len(document_text),
+                "pages": result["pages"],
+                "method": result["method"],
+                "ocr_pages": result.get("ocr_pages", 0),
+                "warning": result.get("warning"),
+            },
+        }
+    except Exception as e:
+        log.error("Upload job failed: %s", e)
+        _jobs[job_id] = {"stage": "Error", "pct": 100, "done": True, "error": str(e), "result": None}
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
-    global document_text
-
     suffix = os.path.splitext(file.filename or "")[1].lower() or ".pdf"
     if suffix != ".pdf":
         return JSONResponse(status_code=400, content={"error": "Only .pdf files are accepted."})
@@ -131,7 +171,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     total = 0
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         while True:
-            chunk = await file.read(1024 * 1024)                       
+            chunk = await file.read(1024 * 1024)
             if not chunk:
                 break
             total += len(chunk)
@@ -145,29 +185,20 @@ async def upload_pdf(file: UploadFile = File(...)):
             tmp.write(chunk)
         tmp_path = tmp.name
 
-    try:
-        result = extract_pdf_text(tmp_path)
-    finally:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
+    # start processing in a background thread; client polls /progress/{job_id}
+    job_id = uuid.uuid4().hex
+    _jobs[job_id] = {"stage": "Queued", "pct": 30, "done": False, "error": None, "result": None}
+    threading.Thread(target=_process_pdf_job, args=(job_id, tmp_path), daemon=True).start()
 
-    document_text = result["text"]
+    return {"job_id": job_id}
 
-    chunks = chunk_text(document_text)
-    log.info("Extraction method: %s | OCR pages: %s | chunks: %d",
-             result["method"], result.get("ocr_pages", 0), len(chunks))
-    build_index(chunks)
 
-    return {
-        "Message": "PDF uploaded successfully",
-        "characters": len(document_text),
-        "pages": result["pages"],
-        "method": result["method"],                                              
-        "ocr_pages": result.get("ocr_pages", 0),
-        "warning": result.get("warning"),
-    }
+@app.get("/progress/{job_id}")
+def upload_progress(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Unknown job id."})
+    return job
 
                                                                          
 @app.post("/quiz")

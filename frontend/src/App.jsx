@@ -205,32 +205,45 @@ export default function App() {
     formData.append("file", file);
 
     try {
-      const data = await new Promise((resolve, reject) => {
+      // Phase 1: upload the bytes (real transfer progress)
+      const { job_id } = await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", `${API}/upload`);
-
-        // real transfer progress (0–100% of bytes sent)
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 100);
+            // map byte transfer to 0–30% of the overall bar
+            const pct = Math.round((e.loaded / e.total) * 30);
             setUploadPct(pct);
-            if (pct >= 100) {
-              // bytes are up; server is now extracting text / running OCR / embedding
-              setUploadStatus("Processing document… (extracting text, building index)");
-            } else {
-              setUploadStatus(`Uploading… ${pct}%`);
-            }
+            setUploadStatus(`Uploading… ${Math.round((e.loaded / e.total) * 100)}%`);
           }
         };
-
         xhr.onload = () => {
           let parsed = {};
           try { parsed = JSON.parse(xhr.responseText); } catch { /* ignore */ }
-          if (xhr.status >= 200 && xhr.status < 300) resolve(parsed);
+          if (xhr.status >= 200 && xhr.status < 300 && parsed.job_id) resolve(parsed);
           else reject(new Error(parsed.error || `Upload failed (HTTP ${xhr.status}).`));
         };
         xhr.onerror = () => reject(new Error("Network error. Is the backend reachable?"));
         xhr.send(formData);
+      });
+
+      // Phase 2: poll the backend for real processing stages
+      const data = await new Promise((resolve, reject) => {
+        const poll = async () => {
+          try {
+            const r = await fetch(`${API}/progress/${job_id}`);
+            if (!r.ok) throw new Error("Lost track of the upload job.");
+            const job = await r.json();
+            setUploadPct(job.pct ?? 30);
+            if (job.error) { reject(new Error(job.error)); return; }
+            if (job.done) { resolve(job.result || {}); return; }
+            setUploadStatus(`${job.stage}…`);
+            setTimeout(poll, 500);
+          } catch (e) {
+            reject(e);
+          }
+        };
+        poll();
       });
 
       setPdfLoaded(true);
@@ -566,7 +579,7 @@ export default function App() {
             {uploadPct !== null && (
               <div className="upload-bar">
                 <div
-                  className={uploadPct >= 100 ? "upload-bar-fill processing" : "upload-bar-fill"}
+                  className={uploadPct >= 30 && uploadPct < 100 ? "upload-bar-fill processing" : "upload-bar-fill"}
                   style={{ width: `${uploadPct}%` }}
                 />
               </div>
