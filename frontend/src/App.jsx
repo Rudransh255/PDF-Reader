@@ -103,6 +103,7 @@ export default function App() {
   const [pageCount, setPageCount] = useState(1);
   const [uploadStatus, setUploadStatus] = useState("No PDF loaded");
   const [uploadError, setUploadError] = useState(false);
+  const [uploadPct, setUploadPct] = useState(null);
 
   const [helperTab, setHelperTab] = useState("quiz");
 
@@ -197,17 +198,41 @@ export default function App() {
       return;
     }
     setUploadError(false);
+    setUploadPct(0);
     setUploadStatus("Uploading…");
+
     const formData = new FormData();
     formData.append("file", file);
+
     try {
-      const res = await fetch(`${API}/upload`, { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) {
-        setUploadError(true);
-        setUploadStatus(data.error || "Upload failed.");
-        return;
-      }
+      const data = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${API}/upload`);
+
+        // real transfer progress (0–100% of bytes sent)
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            setUploadPct(pct);
+            if (pct >= 100) {
+              // bytes are up; server is now extracting text / running OCR / embedding
+              setUploadStatus("Processing document… (extracting text, building index)");
+            } else {
+              setUploadStatus(`Uploading… ${pct}%`);
+            }
+          }
+        };
+
+        xhr.onload = () => {
+          let parsed = {};
+          try { parsed = JSON.parse(xhr.responseText); } catch { /* ignore */ }
+          if (xhr.status >= 200 && xhr.status < 300) resolve(parsed);
+          else reject(new Error(parsed.error || `Upload failed (HTTP ${xhr.status}).`));
+        };
+        xhr.onerror = () => reject(new Error("Network error. Is the backend reachable?"));
+        xhr.send(formData);
+      });
+
       setPdfLoaded(true);
       if (data.pages) setPageCount(data.pages);
       let note = `${file.name} loaded · ${data.characters ?? 0} characters`;
@@ -218,8 +243,11 @@ export default function App() {
       setUploadStatus(note);
 
       setQuiz([]); setCards([]); setChat([]); setLastQuestion(""); setStaleChat(false);
-    } catch {
-      setUploadStatus("Upload failed. Is the backend running on port 8000?");
+    } catch (err) {
+      setUploadError(true);
+      setUploadStatus(err.message || "Upload failed.");
+    } finally {
+      setUploadPct(null);
     }
   };
 
@@ -448,6 +476,64 @@ export default function App() {
 
   const notebookChars = notebook.replace(/<[^>]*>/g, "").length;
 
+  const exportPdf = () => {
+    const esc = (s) =>
+      String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    const itemsHtml = savedItems
+      .map((it) => {
+        if (it.type === "image") {
+          return it.src
+            ? `<div class="item"><div class="kind">Image</div><img src="${it.src}" /></div>`
+            : "";
+        }
+        if (it.type === "quiz") {
+          const opts = it.options
+            .map((o, i) => `<li class="${i === it.answer ? "right" : ""}">${esc(o)}</li>`)
+            .join("");
+          return `<div class="item"><div class="kind">Quiz</div><p class="q">${esc(it.question)}</p><ul>${opts}</ul></div>`;
+        }
+        const label = it.type === "flashcard" ? "Flashcard" : "AI Answer";
+        const q = it.question ? `<p class="q">${esc(it.question)}</p>` : "";
+        return `<div class="item"><div class="kind">${label}</div>${q}<p class="a">${esc(it.answer)}</p></div>`;
+      })
+      .join("");
+
+    const notesHtml = DOMPurify.sanitize(notebookRef.current?.innerHTML || "");
+
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(notebookTitle)}</title>
+<style>
+  body { font-family: Georgia, "Times New Roman", serif; color: #1a1a1a; max-width: 720px; margin: 40px auto; padding: 0 24px; line-height: 1.6; }
+  h1 { font-size: 26px; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 24px; }
+  .item { border: 1px solid #ccc; border-radius: 8px; padding: 12px 14px; margin: 0 0 14px; page-break-inside: avoid; }
+  .kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #666; margin-bottom: 6px; }
+  .q { font-weight: bold; margin: 0 0 6px; }
+  .a { margin: 0; white-space: pre-wrap; }
+  ul { margin: 6px 0 0; padding-left: 20px; }
+  li.right { font-weight: bold; }
+  li.right::after { content: " ✓"; color: #1a7f37; }
+  img { max-width: 100%; border-radius: 6px; }
+  mark { background: #fff3a3; }
+  .notes { margin-top: 20px; white-space: pre-wrap; }
+  @media print { body { margin: 0; } }
+</style></head><body>
+  <h1>${esc(notebookTitle)}</h1>
+  ${itemsHtml}
+  <div class="notes">${notesHtml}</div>
+</body></html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) {
+      alert("Please allow popups to export the notebook as PDF.");
+      return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    // give images a moment to load, then open the print dialog
+    w.onload = () => setTimeout(() => w.print(), 300);
+  };
+
   const pickOption = (qi, oi) => {
     if (picked[qi] !== undefined) return;
     setPicked((p) => ({ ...p, [qi]: oi }));
@@ -477,6 +563,14 @@ export default function App() {
           <div>
             <h1>PDF <span>Buddy</span> <em className="pages-pill">{pageCount} pages</em></h1>
             <p className={uploadError ? "doc-status err" : "doc-status"}>Active document: {uploadStatus}</p>
+            {uploadPct !== null && (
+              <div className="upload-bar">
+                <div
+                  className={uploadPct >= 100 ? "upload-bar-fill processing" : "upload-bar-fill"}
+                  style={{ width: `${uploadPct}%` }}
+                />
+              </div>
+            )}
           </div>
         </div>
         <div className="top-actions">
@@ -724,6 +818,7 @@ export default function App() {
           <div className="notebook-foot">
             <span className="meta">{savedItems.length} items · {notebookChars} chars · auto-saved</span>
             <div className="foot-btns">
+              <button className="btn ghost sm" onClick={exportPdf}>Export PDF</button>
               <button className="btn ghost sm" onClick={copyNotebook}>Copy</button>
               <button className="btn ghost sm danger" onClick={clearNotebook}>Clear</button>
             </div>

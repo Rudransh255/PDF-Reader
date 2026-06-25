@@ -1,16 +1,10 @@
 
-
 from pypdf import PdfReader
 import os
 import logging
 
 log = logging.getLogger("pdfbuddy.ocr")
 
-                                                                    
-
-                                                                           
-
-                                                                            
                                                                              
 TESSERACT_EXE = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
@@ -36,7 +30,7 @@ def _ocr_available():
         log.warning("  (looked for tesseract at: %s)", TESSERACT_EXE)
         return False
 
-def ocr_pdf_path(path, dpi=300, lang="eng"):
+def ocr_pdf_path(path, dpi=200, lang="eng"):
     """Run OCR over every page of a PDF given its file path. Returns text."""
     import pytesseract
     from pdf2image import convert_from_path
@@ -51,7 +45,7 @@ def ocr_pdf_path(path, dpi=300, lang="eng"):
         log.info("OCR page %d/%d: %d chars", i + 1, len(images), len(page_text))
     return "\n".join(out)
 
-def extract_pdf_text(path, min_chars_per_page=20, dpi=300, lang="eng"):
+def extract_pdf_text(path, min_chars_per_page=20, dpi=200, lang="eng"):
     """
     Extract text from a PDF, using the digital text layer where available and
     OCR where it is missing.
