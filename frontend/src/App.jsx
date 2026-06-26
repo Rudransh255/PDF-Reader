@@ -598,7 +598,7 @@ export default function App() {
 
       <main className="columns">
         {}
-        <section className="panel">
+        <section className="panel panel-helper">
           <div className="panel-head">
             <h2 className="panel-title">Helper</h2>
           </div>
@@ -650,9 +650,7 @@ export default function App() {
                         );
                       })}
                     </div>
-                    {answered && (
-                      <button className="link-btn" onClick={() => importQuizQuestion(qi)}>+ Save to notebook</button>
-                    )}
+                    <button className="link-btn" onClick={() => importQuizQuestion(qi)}>+ Save to notebook</button>
                   </div>
                 );
               })}
@@ -711,9 +709,9 @@ export default function App() {
         </section>
 
         {}
-        <section className="panel">
+        <section className="panel panel-chat">
           <div className="panel-head row">
-            <h2 className="panel-title">AI Intelligent Agent</h2>
+            <h2 className="panel-title">AI Agent</h2>
             {chat.length > 0 && (
               <button className="tool-btn" onClick={() => { setChat([]); setLastQuestion(""); setStaleChat(false); }}>Clear chat</button>
             )}
@@ -760,7 +758,7 @@ export default function App() {
         </section>
 
         {}
-        <section className="panel">
+        <section className="panel panel-notebook">
           <div className="panel-head row">
             <h2 className="panel-title">My Notebook</h2>
             <button className="tool-btn" onClick={() => imageInputRef.current?.click()}>Insert Image</button>

@@ -354,4 +354,8 @@
 @media (max-width: 980px) {
   .columns { grid-template-columns: 1fr; }
   .topbar { flex-direction: column; }
+  /* on mobile, surface the AI Agent first, then Helper, then Notebook */
+  .panel-chat { order: 1; }
+  .panel-helper { order: 2; }
+  .panel-notebook { order: 3; }
 }
