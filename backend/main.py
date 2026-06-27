@@ -12,6 +12,9 @@ from openai import OpenAI
 from services.rag import (
     chunk_text,
     build_index,
+    add_document,
+    reset_index,
+    list_documents,
     search,
 )
 
@@ -118,7 +121,8 @@ def _ask_json(prompt: str):
 def _context_for(topic: str, k: int = 5):
     """Retrieve chunks. If a topic is given, search for it; else a generic query."""
     query = topic.strip() if topic and topic.strip() else "summary key concepts overview"
-    return "\n\n".join(search(query, k=k))
+    hits = search(query, k=k)
+    return "\n\n".join(h["text"] for h in hits)
 
                                                                            
 import uuid
@@ -128,7 +132,7 @@ import threading
 _jobs = {}
 
 
-def _process_pdf_job(job_id, tmp_path):
+def _process_pdf_job(job_id, tmp_path, filename="document", replace=False):
     global document_text
     try:
         _jobs[job_id] = {"stage": "Extracting text", "pct": 35, "done": False, "error": None, "result": None}
@@ -144,9 +148,13 @@ def _process_pdf_job(job_id, tmp_path):
 
         _jobs[job_id].update({"stage": "Building search index", "pct": 80})
         chunks = chunk_text(document_text)
-        log.info("Extraction method: %s | OCR pages: %s | chunks: %d",
-                 result["method"], result.get("ocr_pages", 0), len(chunks))
-        build_index(chunks)
+        log.info("Extraction method: %s | OCR pages: %s | chunks: %d | source: %s",
+                 result["method"], result.get("ocr_pages", 0), len(chunks), filename)
+
+        # combined knowledge base: add this doc to the index (or replace all if asked)
+        if replace:
+            reset_index()
+        add_document(chunks, source=filename)
 
         _jobs[job_id] = {
             "stage": "Done", "pct": 100, "done": True, "error": None,
@@ -156,6 +164,7 @@ def _process_pdf_job(job_id, tmp_path):
                 "method": result["method"],
                 "ocr_pages": result.get("ocr_pages", 0),
                 "warning": result.get("warning"),
+                "documents": list_documents(),
             },
         }
     except Exception as e:
@@ -169,7 +178,7 @@ def _process_pdf_job(job_id, tmp_path):
 
 
 @app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(file: UploadFile = File(...), replace: bool = False):
     suffix = os.path.splitext(file.filename or "")[1].lower() or ".pdf"
     if suffix != ".pdf":
         return JSONResponse(status_code=400, content={"error": "Only .pdf files are accepted."})
@@ -191,10 +200,11 @@ async def upload_pdf(file: UploadFile = File(...)):
             tmp.write(chunk)
         tmp_path = tmp.name
 
+    fname = file.filename or "document"
     # start processing in a background thread; client polls /progress/{job_id}
     job_id = uuid.uuid4().hex
     _jobs[job_id] = {"stage": "Queued", "pct": 30, "done": False, "error": None, "result": None}
-    threading.Thread(target=_process_pdf_job, args=(job_id, tmp_path), daemon=True).start()
+    threading.Thread(target=_process_pdf_job, args=(job_id, tmp_path, fname, replace), daemon=True).start()
 
     return {"job_id": job_id}
 
@@ -287,7 +297,13 @@ def chat_endpoint(request: ChatRequest):
 
     log.debug("Retrieved %d chunks", len(results))
 
-    context = "\n\n".join(results)
+    # label each chunk with its source document so the model can attribute and
+    # distinguish across multiple PDFs in the combined knowledge base
+    context = "\n\n".join(f"[from: {h['source']}]\n{h['text']}" for h in results)
+    source_names = []
+    for h in results:
+        if h["source"] not in source_names:
+            source_names.append(h["source"])
 
     chat_history.append({"role": "user", "content": request.message})
     chat_history = chat_history[-10:]
@@ -296,22 +312,23 @@ def chat_endpoint(request: ChatRequest):
         {
             "role": "system",
             "content": f"""
-You are a helpful assistant that answers questions about the user's PDF document.
+You are a helpful assistant that answers questions about the user's uploaded PDF documents.
 
 Use the document context below to answer. The context may contain several
-relevant sections — read ALL of them before answering, and combine information
-from multiple sections when needed (for example, if the user asks for all dates,
-times, or items, list every one you can find across the context, not just the
-first).
+relevant sections, possibly from DIFFERENT documents (each marked with its
+source like "[from: filename]"). Read ALL of them before answering, and combine
+information across sections when needed (for example, if the user asks for all
+dates, times, or items, list every one you can find, not just the first).
 
 Guidelines:
 - Answer thoroughly and completely. Do not give a one-line answer when the
-  document contains more relevant detail.
+  documents contain more relevant detail.
+- When information comes from different documents, you may mention which
+  document it came from if that helps clarity.
 - If information appears for multiple categories (e.g. different classes,
   subjects, or sections), clearly label which is which, and only include what
   the user asked for.
-- Reply in the SAME language the user wrote their latest message in. If the user
-  writes in English, answer in English; if in Hindi, answer in Hindi.
+- Reply in the SAME language the user wrote their latest message in.
 - If the answer is not in the context, say so plainly instead of guessing.
 - For mathematical expressions, use LaTeX: inline math in \\( ... \\) and block
   equations in \\[ ... \\].
@@ -327,11 +344,11 @@ Document context:
         reply = llm_chat(messages)
     except Exception as e:
         log.error("LLM call failed in /chat: %s", e)
-        return {"reply": "The AI service is temporarily unavailable. Please try again in a moment.", "sources": results}
+        return {"reply": "The AI service is temporarily unavailable. Please try again in a moment.", "sources": source_names}
 
     chat_history.append({"role": "assistant", "content": reply})
 
-    return {"reply": reply, "sources": results}
+    return {"reply": reply, "sources": source_names}
 
 
 @app.post("/reset_chat")
@@ -340,3 +357,19 @@ def reset_chat():
     global chat_history
     chat_history = []
     return {"status": "cleared"}
+
+
+@app.get("/documents")
+def get_documents():
+    """List the documents currently in the combined knowledge base."""
+    return {"documents": list_documents()}
+
+
+@app.post("/clear_documents")
+def clear_documents():
+    """Remove all documents from the knowledge base and clear chat."""
+    global document_text, chat_history
+    reset_index()
+    document_text = ""
+    chat_history = []
+    return {"status": "cleared", "documents": []}

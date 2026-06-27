@@ -102,6 +102,7 @@ export default function App() {
   const [pdfLoaded, setPdfLoaded] = useState(false);
   const [pageCount, setPageCount] = useState(1);
   const [uploadStatus, setUploadStatus] = useState("No PDF loaded");
+  const [docs, setDocs] = useState([]);
   const [uploadError, setUploadError] = useState(false);
   const [uploadPct, setUploadPct] = useState(null);
 
@@ -254,15 +255,19 @@ export default function App() {
 
       setPdfLoaded(true);
       if (data.pages) setPageCount(data.pages);
-      let note = `${file.name} loaded · ${data.characters ?? 0} characters`;
+      if (data.documents) setDocs(data.documents);
+      const count = data.documents?.length || 1;
+      let note = count > 1
+        ? `${count} documents loaded · added ${file.name}`
+        : `${file.name} loaded · ${data.characters ?? 0} characters`;
       if (data.method === "ocr") note += ` · read by OCR (${data.ocr_pages} pages)`;
       else if (data.method === "mixed") note += ` · ${data.ocr_pages} pages via OCR`;
       else if (data.method === "empty") note += ` · no text found`;
       if (data.warning) note += ` · ${data.warning}`;
       setUploadStatus(note);
 
-      setQuiz([]); setCards([]); setChat([]); setLastQuestion(""); setStaleChat(false);
-      clearServerChat();
+      // keep existing chat/quiz/notebook — new docs add to the knowledge base
+      setStaleChat(false);
     } catch (err) {
       setUploadError(true);
       setUploadStatus(err.message || "Upload failed.");
@@ -276,7 +281,9 @@ export default function App() {
     setUploadStatus("No PDF loaded");
     setQuiz([]); setCards([]); setChat([]); setLastQuestion(""); setStaleChat(false);
     setPicked({}); setCardIndex(0); setFlipped(false);
-    clearServerChat();
+    setDocs([]);
+    // clear the whole knowledge base on the server (all docs + chat)
+    fetch(`${API}/clear_documents`, { method: "POST" }).catch(() => {});
   };
 
   const loadQuiz = async () => {
@@ -326,7 +333,7 @@ export default function App() {
         body: JSON.stringify({ message: q }),
       });
       const data = await res.json();
-      setChat((c) => [...c, { role: "assistant", content: data.reply || "No reply received" }]);
+      setChat((c) => [...c, { role: "assistant", content: data.reply || "No reply received", sources: data.sources || [] }]);
     } catch {
       setChat((c) => [...c, { role: "assistant", content: "Couldn't reach the backend." }]);
     }
@@ -584,6 +591,13 @@ export default function App() {
           <div>
             <h1>PDF <span>Buddy</span> <em className="pages-pill">{pageCount} pages</em></h1>
             <p className={uploadError ? "doc-status err" : "doc-status"}>Active document: {uploadStatus}</p>
+            {docs.length > 0 && (
+              <div className="doc-chips">
+                {docs.map((d, i) => (
+                  <span className="doc-chip" key={i} title={d}>{d}</span>
+                ))}
+              </div>
+            )}
             {uploadPct !== null && (
               <div className="upload-bar">
                 <div
@@ -596,10 +610,10 @@ export default function App() {
         </div>
         <div className="top-actions">
           <label className="filepick">
-            {file ? file.name : "Choose a PDF to begin"}
+            {file ? file.name : (docs.length > 0 ? "Choose another PDF" : "Choose a PDF to begin")}
             <input type="file" accept=".pdf" onChange={(e) => { setFile(e.target.files[0]); setUploadError(false); }} />
           </label>
-          <button className="btn primary" onClick={uploadPdf}>Upload PDF</button>
+          <button className="btn primary" onClick={uploadPdf}>{docs.length > 0 ? "Add PDF" : "Upload PDF"}</button>
           <button className="btn ghost" onClick={reset}>Reset</button>
         </div>
       </header>
@@ -745,6 +759,13 @@ export default function App() {
             {chat.map((m, i) => (
               <div key={i} className={m.role === "user" ? "bubble user" : "bubble bot"}>
                 <MathText text={m.content} />
+                {m.role === "assistant" && m.sources && m.sources.length > 0 && (
+                  <div className="bubble-sources">
+                    Sources: {m.sources.map((s, si) => (
+                      <span className="src-chip" key={si}>{s}</span>
+                    ))}
+                  </div>
+                )}
                 {m.role === "assistant" && (
                   <button className="bubble-save" onClick={() => importAnswer(i)}>+ Save answer to notebook</button>
                 )}

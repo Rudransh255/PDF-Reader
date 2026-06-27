@@ -331,6 +331,21 @@
 .notebook-area strong { color: #fff; }
 .notebook-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
 
+.doc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.doc-chip {
+  font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--text-dim);
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bubble-sources {
+  margin-top: 8px; font-size: 11px; color: var(--text-dim);
+  display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+}
+.src-chip {
+  padding: 2px 7px; border-radius: 999px; background: var(--panel);
+  border: 1px solid var(--line); color: var(--text-dim);
+}
+
 .upload-bar {
   width: 260px; max-width: 100%; height: 6px; margin-top: 6px;
   background: var(--line); border-radius: 999px; overflow: hidden;
