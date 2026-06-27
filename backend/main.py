@@ -18,7 +18,7 @@ from services.rag import (
     search,
 )
 
-MAX_UPLOAD_BYTES = 60 * 1024 * 1024         
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
                                                                                  
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -79,6 +79,7 @@ class ChatRequest(BaseModel):
 
 class TopicRequest(BaseModel):
     topic: str = Field(default="", max_length=500)
+    avoid: list[str] = Field(default_factory=list)
 
 @app.get("/")
 def home():
@@ -196,7 +197,7 @@ async def upload_pdf(file: UploadFile = File(...), replace: bool = False):
                     os.remove(tmp.name)
                 except OSError:
                     pass
-                return JSONResponse(status_code=413, content={"error": "File too large (max 60 MB)."})
+                return JSONResponse(status_code=413, content={"error": "File too large (max 100 MB)."})
             tmp.write(chunk)
         tmp_path = tmp.name
 
@@ -232,9 +233,17 @@ def quiz_endpoint(req: TopicRequest = TopicRequest()):
         else "Cover the most important ideas in the content.\n"
     )
 
+    avoid_note = ""
+    if req.avoid:
+        existing = "; ".join(req.avoid[:20])
+        avoid_note = (
+            f"\nDo NOT repeat or rephrase any of these existing questions; "
+            f"write entirely new ones covering different points: {existing}\n"
+        )
+
     prompt = f"""
 Using ONLY the content below, write 4 multiple-choice questions.
-{focus}Each question has exactly 4 options and one correct option.
+{focus}{avoid_note}Each question has exactly 4 options and one correct option.
 
 Return JSON in this exact shape:
 {{"questions": [
@@ -267,9 +276,17 @@ def flashcards_endpoint(req: TopicRequest = TopicRequest()):
         else "Cover the most important ideas in the content.\n"
     )
 
+    avoid_note = ""
+    if req.avoid:
+        existing = "; ".join(req.avoid[:20])
+        avoid_note = (
+            f"\nDo NOT repeat or rephrase any of these existing cards; write "
+            f"entirely new ones covering different points: {existing}\n"
+        )
+
     prompt = f"""
 Using ONLY the content below, write 6 study flashcards.
-{focus}Each card has a short question and a concise answer.
+{focus}{avoid_note}Each card has a short question and a concise answer.
 
 Return JSON in this exact shape:
 {{"cards": [{{"question": "...", "answer": "..."}}]}}

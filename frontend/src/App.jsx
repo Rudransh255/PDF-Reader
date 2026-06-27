@@ -130,6 +130,13 @@ export default function App() {
   const [savedItems, setSavedItems] = useState(_persisted?.items ?? []);
   const notebookRef = useRef(null);
   const imageInputRef = useRef(null);
+  const chatEndRef = useRef(null);
+  const pdfInputRef = useRef(null);
+
+  // autoscroll chat to the newest message
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chat, chatLoading]);
   const [lightbox, setLightbox] = useState(null);
 
   useEffect(() => {
@@ -192,16 +199,16 @@ export default function App() {
     fetch(`${API}/reset_chat`, { method: "POST" }).catch(() => {});
   };
 
-  const uploadPdf = async () => {
-    if (!file) {
+  const uploadPdf = async (theFile = file) => {
+    if (!theFile) {
       setUploadError(true);
-      setUploadStatus("No PDF selected — choose a PDF first, then click Upload.");
+      setUploadStatus("No PDF selected — choose a PDF first.");
       return;
     }
 
-    if (file.size > 60 * 1024 * 1024) {
+    if (theFile.size > 100 * 1024 * 1024) {
       setUploadError(true);
-      setUploadStatus("PDF is too large (max 60 MB). Please choose a smaller file.");
+      setUploadStatus("PDF is too large (max 100 MB). Please choose a smaller file.");
       return;
     }
     setUploadError(false);
@@ -209,7 +216,7 @@ export default function App() {
     setUploadStatus("Uploading…");
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", theFile);
 
     try {
       // Phase 1: upload the bytes (real transfer progress)
@@ -258,8 +265,8 @@ export default function App() {
       if (data.documents) setDocs(data.documents);
       const count = data.documents?.length || 1;
       let note = count > 1
-        ? `${count} documents loaded · added ${file.name}`
-        : `${file.name} loaded · ${data.characters ?? 0} characters`;
+        ? `${count} documents loaded · added ${theFile.name}`
+        : `${theFile.name} loaded · ${data.characters ?? 0} characters`;
       if (data.method === "ocr") note += ` · read by OCR (${data.ocr_pages} pages)`;
       else if (data.method === "mixed") note += ` · ${data.ocr_pages} pages via OCR`;
       else if (data.method === "empty") note += ` · no text found`;
@@ -286,36 +293,46 @@ export default function App() {
     fetch(`${API}/clear_documents`, { method: "POST" }).catch(() => {});
   };
 
-  const loadQuiz = async () => {
+  const loadQuiz = async (append = false) => {
     if (!pdfLoaded) return;
-    setQuizLoading(true); setPicked({});
+    setQuizLoading(true);
+    if (!append) setPicked({});
     try {
       const res = await fetch(`${API}/quiz`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: lastQuestion }),
+        body: JSON.stringify({
+          topic: lastQuestion,
+          avoid: append ? quiz.map((q) => q.question) : [],
+        }),
       });
       const data = await res.json();
-      setQuiz(data.questions || []);
+      const fresh = data.questions || [];
+      setQuiz((prev) => (append ? [...prev, ...fresh] : fresh));
     } catch {
-      setQuiz([]);
+      if (!append) setQuiz([]);
     }
     setQuizLoading(false);
   };
 
-  const loadFlashcards = async () => {
+  const loadFlashcards = async (append = false) => {
     if (!pdfLoaded) return;
-    setCardLoading(true); setCardIndex(0); setFlipped(false);
+    setCardLoading(true);
+    if (!append) { setCardIndex(0); setFlipped(false); }
     try {
       const res = await fetch(`${API}/flashcards`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: lastQuestion }),
+        body: JSON.stringify({
+          topic: lastQuestion,
+          avoid: append ? cards.map((c) => c.question) : [],
+        }),
       });
       const data = await res.json();
-      setCards(data.cards || []);
+      const fresh = data.cards || [];
+      setCards((prev) => (append ? [...prev, ...fresh] : fresh));
     } catch {
-      setCards([]);
+      if (!append) setCards([]);
     }
     setCardLoading(false);
   };
@@ -609,11 +626,24 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
-          <label className="filepick">
-            {file ? file.name : (docs.length > 0 ? "Choose another PDF" : "Choose a PDF to begin")}
-            <input type="file" accept=".pdf" onChange={(e) => { setFile(e.target.files[0]); setUploadError(false); }} />
-          </label>
-          <button className="btn primary" onClick={uploadPdf}>{docs.length > 0 ? "Add PDF" : "Upload PDF"}</button>
+          <input
+            type="file"
+            accept=".pdf"
+            ref={pdfInputRef}
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files[0];
+              e.target.value = "";          // allow re-picking same file
+              if (f) { setFile(f); setUploadError(false); uploadPdf(f); }
+            }}
+          />
+          <button
+            className="btn primary"
+            onClick={() => pdfInputRef.current?.click()}
+            disabled={uploadPct !== null}
+          >
+            {uploadPct !== null ? "Uploading…" : (docs.length > 0 ? "+ Add PDF" : "Upload PDF")}
+          </button>
           <button className="btn ghost" onClick={reset}>Reset</button>
         </div>
       </header>
@@ -676,10 +706,14 @@ export default function App() {
                   </div>
                 );
               })}
+              {quiz.length > 0 && (
+                <button className="btn ghost block" disabled={quizLoading} onClick={() => loadQuiz(true)}>
+                  {quizLoading ? "Adding more…" : "+ Generate more questions"}
+                </button>
+              )}
             </div>
           )}
 
-          {}
           {helperTab === "flashcards" && (
             <div className="helper-body">
               <button className="btn block" disabled={!pdfLoaded || cardLoading} onClick={loadFlashcards}>
@@ -723,6 +757,9 @@ export default function App() {
                       onClick={() => { setCardIndex((i) => Math.min(cards.length - 1, i + 1)); setFlipped(false); }}>Next</button>
                   </div>
                   <button className="link-btn" onClick={() => importCard(cards[cardIndex])}>+ Save this card to notebook</button>
+                  <button className="btn ghost block" disabled={cardLoading} onClick={() => loadFlashcards(true)}>
+                    {cardLoading ? "Adding more…" : "+ Generate more cards"}
+                  </button>
                 </>
               )}
             </div>
@@ -772,6 +809,7 @@ export default function App() {
               </div>
             ))}
             {chatLoading && <div className="bubble bot">…</div>}
+            <div ref={chatEndRef} />
           </div>
           <div className="suggest-row">
             {["Key facts", "Methodology", "Explain basic concepts"].map((s) => (
