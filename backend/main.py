@@ -281,7 +281,7 @@ def chat_endpoint(request: ChatRequest):
     log.info("Chat question: %s", request.message)
 
     try:
-        results = search(request.message, k=2)
+        results = search(request.message, k=6)
     except Exception as e:
         return {"reply": str(e)}
 
@@ -296,18 +296,28 @@ def chat_endpoint(request: ChatRequest):
         {
             "role": "system",
             "content": f"""
-You are a PDF assistant.
+You are a helpful assistant that answers questions about the user's PDF document.
 
-Use the conversation history and the provided context.
+Use the document context below to answer. The context may contain several
+relevant sections — read ALL of them before answering, and combine information
+from multiple sections when needed (for example, if the user asks for all dates,
+times, or items, list every one you can find across the context, not just the
+first).
 
-Context:
+Guidelines:
+- Answer thoroughly and completely. Do not give a one-line answer when the
+  document contains more relevant detail.
+- If information appears for multiple categories (e.g. different classes,
+  subjects, or sections), clearly label which is which, and only include what
+  the user asked for.
+- Reply in the SAME language the user wrote their latest message in. If the user
+  writes in English, answer in English; if in Hindi, answer in Hindi.
+- If the answer is not in the context, say so plainly instead of guessing.
+- For mathematical expressions, use LaTeX: inline math in \\( ... \\) and block
+  equations in \\[ ... \\].
+
+Document context:
 {context}
-
-Rules:
-- Answer only from the context.
-- For mathematical expressions, use LaTeX: inline math wrapped in \\( ... \\)
-  and display/block equations wrapped in \\[ ... \\]. For non-math answers,
-  write normally in plain prose.
 """,
         }
     ]
@@ -322,3 +332,11 @@ Rules:
     chat_history.append({"role": "assistant", "content": reply})
 
     return {"reply": reply, "sources": results}
+
+
+@app.post("/reset_chat")
+def reset_chat():
+    """Clear the server-side conversation history."""
+    global chat_history
+    chat_history = []
+    return {"status": "cleared"}

@@ -185,6 +185,12 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [lightbox]);
 
+  const clearServerChat = () => {
+    // also clear the shared server-side history so old messages (and their
+    // language) don't bleed into the next conversation
+    fetch(`${API}/reset_chat`, { method: "POST" }).catch(() => {});
+  };
+
   const uploadPdf = async () => {
     if (!file) {
       setUploadError(true);
@@ -256,6 +262,7 @@ export default function App() {
       setUploadStatus(note);
 
       setQuiz([]); setCards([]); setChat([]); setLastQuestion(""); setStaleChat(false);
+      clearServerChat();
     } catch (err) {
       setUploadError(true);
       setUploadStatus(err.message || "Upload failed.");
@@ -269,6 +276,7 @@ export default function App() {
     setUploadStatus("No PDF loaded");
     setQuiz([]); setCards([]); setChat([]); setLastQuestion(""); setStaleChat(false);
     setPicked({}); setCardIndex(0); setFlipped(false);
+    clearServerChat();
   };
 
   const loadQuiz = async () => {
@@ -713,7 +721,7 @@ export default function App() {
           <div className="panel-head row">
             <h2 className="panel-title">AI Agent</h2>
             {chat.length > 0 && (
-              <button className="tool-btn" onClick={() => { setChat([]); setLastQuestion(""); setStaleChat(false); }}>Clear chat</button>
+              <button className="tool-btn" onClick={() => { setChat([]); setLastQuestion(""); setStaleChat(false); clearServerChat(); }}>Clear chat</button>
             )}
           </div>
           {staleChat && !pdfLoaded && (
