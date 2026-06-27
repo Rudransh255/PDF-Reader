@@ -217,7 +217,32 @@
 .bubble { max-width: 85%; padding: 11px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
 .bubble.user { align-self: flex-end; background: var(--accent); color: #fff; }
 .bubble.bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); }
-.mathtext { white-space: pre-wrap; }
+.mathtext { white-space: normal; }
+.mathtext p { margin: 0 0 8px; }
+.mathtext p:last-child { margin-bottom: 0; }
+.mathtext h1, .mathtext h2, .mathtext h3,
+.mathtext h4, .mathtext h5, .mathtext h6 {
+  margin: 10px 0 6px; line-height: 1.25; font-weight: 600;
+}
+.mathtext h1 { font-size: 1.25em; }
+.mathtext h2 { font-size: 1.15em; }
+.mathtext h3 { font-size: 1.07em; }
+.mathtext h4, .mathtext h5, .mathtext h6 { font-size: 1em; }
+.mathtext ul, .mathtext ol { margin: 6px 0; padding-left: 20px; }
+.mathtext li { margin: 2px 0; }
+.mathtext code {
+  background: var(--panel); border: 1px solid var(--line);
+  padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
+}
+.mathtext pre {
+  background: var(--panel); border: 1px solid var(--line);
+  padding: 10px; border-radius: 8px; overflow-x: auto; margin: 8px 0;
+}
+.mathtext pre code { background: none; border: none; padding: 0; }
+.mathtext blockquote {
+  margin: 8px 0; padding: 4px 12px; border-left: 3px solid var(--line);
+  color: var(--text-dim);
+}
 .mathtext .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
 .mathtext .katex { font-size: 1.05em; }
 .suggest-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }

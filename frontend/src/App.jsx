@@ -71,12 +71,77 @@ async function idbDeleteImage(id) {
   });
 }
 
+function mdToHtml(src) {
+  // lightweight markdown -> HTML (no external dep). Handles headings, bold,
+  // italic, inline code, code fences, blockquotes, and unordered/ordered lists.
+  const esc = (s) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const lines = (src || "").replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  let inUl = false, inOl = false, inCode = false;
+  const closeLists = () => {
+    if (inUl) { out.push("</ul>"); inUl = false; }
+    if (inOl) { out.push("</ol>"); inOl = false; }
+  };
+
+  const inline = (t) => {
+    t = esc(t);
+    t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+    t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    t = t.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+    t = t.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+    return t;
+  };
+
+  for (let raw of lines) {
+    if (/^```/.test(raw)) {
+      if (inCode) { out.push("</code></pre>"); inCode = false; }
+      else { closeLists(); out.push("<pre><code>"); inCode = true; }
+      continue;
+    }
+    if (inCode) { out.push(esc(raw)); continue; }
+
+    const h = raw.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      closeLists();
+      const level = h[1].length;
+      out.push(`<h${level}>${inline(h[2])}</h${level}>`);
+      continue;
+    }
+
+    if (/^\s*[-*]\s+/.test(raw)) {
+      if (!inUl) { closeLists(); out.push("<ul>"); inUl = true; }
+      out.push(`<li>${inline(raw.replace(/^\s*[-*]\s+/, ""))}</li>`);
+      continue;
+    }
+    if (/^\s*\d+\.\s+/.test(raw)) {
+      if (!inOl) { closeLists(); out.push("<ol>"); inOl = true; }
+      out.push(`<li>${inline(raw.replace(/^\s*\d+\.\s+/, ""))}</li>`);
+      continue;
+    }
+    if (/^\s*>\s?/.test(raw)) {
+      closeLists();
+      out.push(`<blockquote>${inline(raw.replace(/^\s*>\s?/, ""))}</blockquote>`);
+      continue;
+    }
+    if (raw.trim() === "") { closeLists(); out.push(""); continue; }
+
+    closeLists();
+    out.push(`<p>${inline(raw)}</p>`);
+  }
+  if (inCode) out.push("</code></pre>");
+  closeLists();
+  return out.join("\n");
+}
+
 function MathText({ text }) {
   const ref = useRef(null);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.textContent = text || "";
+    // render markdown first, sanitize, then let KaTeX process math in place
+    el.innerHTML = DOMPurify.sanitize(mdToHtml(text || ""));
 
     if (window.renderMathInElement) {
       try {
@@ -606,7 +671,7 @@ export default function App() {
             </svg>
           </span>
           <div>
-            <h1>PDF <span>Buddy</span> <em className="pages-pill">{pageCount} pages</em></h1>
+            <h1>PDF <span>Buddy</span> {pdfLoaded && <em className="pages-pill">{pageCount} pages</em>}</h1>
             <p className={uploadError ? "doc-status err" : "doc-status"}>Active document: {uploadStatus}</p>
             {docs.length > 0 && (
               <div className="doc-chips">
