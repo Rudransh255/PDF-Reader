@@ -135,6 +135,7 @@ export default function App() {
   const [uploadError, setUploadError] = useState(false);
   const [uploadPct, setUploadPct] = useState(null);
   const [helperTab, setHelperTab] = useState("quiz");
+  const [mobileView, setMobileView] = useState("chat");
   const [quiz, setQuiz] = useState([]);
   const [quizLoading, setQuizLoading] = useState(false);
   const [picked, setPicked] = useState({});
@@ -758,7 +759,13 @@ export default function App() {
         </div>
       </header>
 
-      <main className="columns">
+      <nav className="mobile-nav">
+        <button className={mobileView === "helper" ? "mnav on" : "mnav"} onClick={() => setMobileView("helper")}>Helper</button>
+        <button className={mobileView === "chat" ? "mnav on" : "mnav"} onClick={() => setMobileView("chat")}>AI Agent</button>
+        <button className={mobileView === "notebook" ? "mnav on" : "mnav"} onClick={() => setMobileView("notebook")}>Notebook</button>
+      </nav>
+
+      <main className="columns" data-mobile-view={mobileView}>
         {}
         <section className="panel panel-helper">
           <div className="panel-head">
