@@ -5,6 +5,29 @@ import "./App.css";
 
 const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
+// a stable per-browser session id so each user gets their own private
+// knowledge base and chat on the backend
+const SID_KEY = "pdfBuddySessionId";
+function getSessionId() {
+  try {
+    let id = localStorage.getItem(SID_KEY);
+    if (!id) {
+      id = (crypto.randomUUID && crypto.randomUUID()) ||
+           (Date.now().toString(36) + Math.random().toString(36).slice(2));
+      localStorage.setItem(SID_KEY, id);
+    }
+    return id;
+  } catch {
+    return "default";
+  }
+}
+const SESSION_ID = getSessionId();
+// merge the session header into any fetch options
+const withSession = (opts = {}) => ({
+  ...opts,
+  headers: { ...(opts.headers || {}), "X-Session-Id": SESSION_ID },
+});
+
 const LS_KEY = "pdfBuddyNotebook";
 const loadSaved = () => {
   try {
@@ -209,7 +232,7 @@ export default function App() {
   const clearServerChat = () => {
     // also clear the shared server-side history so old messages (and their
     // language) don't bleed into the next conversation
-    fetch(`${API}/reset_chat`, { method: "POST" }).catch(() => {});
+    fetch(`${API}/reset_chat`, withSession({ method: "POST" })).catch(() => {});
   };
 
   const uploadPdf = async (theFile = file) => {
@@ -236,6 +259,7 @@ export default function App() {
       const { job_id } = await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", `${API}/upload`);
+        xhr.setRequestHeader("X-Session-Id", SESSION_ID);
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
             // map byte transfer to 0–30% of the overall bar
@@ -258,7 +282,7 @@ export default function App() {
       const data = await new Promise((resolve, reject) => {
         const poll = async () => {
           try {
-            const r = await fetch(`${API}/progress/${job_id}`);
+            const r = await fetch(`${API}/progress/${job_id}`, withSession());
             if (!r.ok) throw new Error("Lost track of the upload job.");
             const job = await r.json();
             setUploadPct(job.pct ?? 30);
@@ -303,7 +327,7 @@ export default function App() {
     setPicked({}); setCardIndex(0); setFlipped(false);
     setDocs([]);
     // clear the whole knowledge base on the server (all docs + chat)
-    fetch(`${API}/clear_documents`, { method: "POST" }).catch(() => {});
+    fetch(`${API}/clear_documents`, withSession({ method: "POST" })).catch(() => {});
   };
 
   const loadQuiz = async (append = false) => {
@@ -311,14 +335,14 @@ export default function App() {
     setQuizLoading(true);
     if (!append) setPicked({});
     try {
-      const res = await fetch(`${API}/quiz`, {
+      const res = await fetch(`${API}/quiz`, withSession({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           topic: lastQuestion,
           avoid: append ? quiz.map((q) => q.question) : [],
         }),
-      });
+      }));
       const data = await res.json();
       const fresh = data.questions || [];
       setQuiz((prev) => (append ? [...prev, ...fresh] : fresh));
@@ -333,14 +357,14 @@ export default function App() {
     setCardLoading(true);
     if (!append) { setCardIndex(0); setFlipped(false); }
     try {
-      const res = await fetch(`${API}/flashcards`, {
+      const res = await fetch(`${API}/flashcards`, withSession({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           topic: lastQuestion,
           avoid: append ? cards.map((c) => c.question) : [],
         }),
-      });
+      }));
       const data = await res.json();
       const fresh = data.cards || [];
       setCards((prev) => (append ? [...prev, ...fresh] : fresh));
@@ -357,11 +381,11 @@ export default function App() {
     setLastQuestion(q);
     setMessage(""); setChatLoading(true);
     try {
-      const res = await fetch(`${API}/chat`, {
+      const res = await fetch(`${API}/chat`, withSession({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: q }),
-      });
+      }));
       const data = await res.json();
       setChat((c) => [...c, { role: "assistant", content: data.reply || "No reply received", sources: data.sources || [] }]);
     } catch {
