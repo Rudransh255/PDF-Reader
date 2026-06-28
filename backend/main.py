@@ -3,7 +3,7 @@ import re
 import os
 import tempfile
 from services.ocr import extract_pdf_text
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,14 +11,18 @@ from fastapi.middleware.gzip import GZipMiddleware
 from openai import OpenAI
 from services.rag import (
     chunk_text,
-    build_index,
-    add_document,
-    reset_index,
-    list_documents,
-    search,
+    get_session,
+    drop_session,
+    session_count,
 )
 
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+
+
+def _sid(session_id):
+    """Normalize a session id; fall back to a shared default if none sent
+    (keeps the app working for clients that don't send one yet)."""
+    return (session_id or "default").strip() or "default"
 
                                                                                  
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -55,8 +59,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("pdfbuddy")
 
 app = FastAPI()
-document_text = ""
-chat_history = []
+# per-user state now lives in sessions (see services/rag.py); no module globals.
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
@@ -119,10 +122,10 @@ def _ask_json(prompt: str):
         log.error("Could not parse JSON from model output: %r", raw[:300])
         raise
 
-def _context_for(topic: str, k: int = 5):
+def _context_for(sess, topic: str, k: int = 5):
     """Retrieve chunks. If a topic is given, search for it; else a generic query."""
     query = topic.strip() if topic and topic.strip() else "summary key concepts overview"
-    hits = search(query, k=k)
+    hits = sess.search(query, k=k)
     return "\n\n".join(h["text"] for h in hits)
 
                                                                            
@@ -133,9 +136,9 @@ import threading
 _jobs = {}
 
 
-def _process_pdf_job(job_id, tmp_path, filename="document", replace=False):
-    global document_text
+def _process_pdf_job(job_id, tmp_path, session_id, filename="document", replace=False):
     try:
+        sess = get_session(session_id)
         _jobs[job_id] = {"stage": "Extracting text", "pct": 35, "done": False, "error": None, "result": None}
         result = extract_pdf_text(tmp_path)
 
@@ -145,27 +148,27 @@ def _process_pdf_job(job_id, tmp_path, filename="document", replace=False):
         else:
             _jobs[job_id].update({"stage": "Text extracted", "pct": 60})
 
-        document_text = result["text"]
+        sess.document_text = result["text"]
 
         _jobs[job_id].update({"stage": "Building search index", "pct": 80})
-        chunks = chunk_text(document_text)
+        chunks = chunk_text(sess.document_text)
         log.info("Extraction method: %s | OCR pages: %s | chunks: %d | source: %s",
                  result["method"], result.get("ocr_pages", 0), len(chunks), filename)
 
-        # combined knowledge base: add this doc to the index (or replace all if asked)
+        # combined knowledge base for this session: add this doc (or replace all)
         if replace:
-            reset_index()
-        add_document(chunks, source=filename)
+            sess.reset_index()
+        sess.add_document(chunks, source=filename)
 
         _jobs[job_id] = {
             "stage": "Done", "pct": 100, "done": True, "error": None,
             "result": {
-                "characters": len(document_text),
+                "characters": len(sess.document_text),
                 "pages": result["pages"],
                 "method": result["method"],
                 "ocr_pages": result.get("ocr_pages", 0),
                 "warning": result.get("warning"),
-                "documents": list_documents(),
+                "documents": sess.list_documents(),
             },
         }
     except Exception as e:
@@ -179,7 +182,8 @@ def _process_pdf_job(job_id, tmp_path, filename="document", replace=False):
 
 
 @app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...), replace: bool = False):
+async def upload_pdf(file: UploadFile = File(...), replace: bool = False,
+                     x_session_id: str = Header(default=None)):
     suffix = os.path.splitext(file.filename or "")[1].lower() or ".pdf"
     if suffix != ".pdf":
         return JSONResponse(status_code=400, content={"error": "Only .pdf files are accepted."})
@@ -202,10 +206,11 @@ async def upload_pdf(file: UploadFile = File(...), replace: bool = False):
         tmp_path = tmp.name
 
     fname = file.filename or "document"
+    sid = _sid(x_session_id)
     # start processing in a background thread; client polls /progress/{job_id}
     job_id = uuid.uuid4().hex
     _jobs[job_id] = {"stage": "Queued", "pct": 30, "done": False, "error": None, "result": None}
-    threading.Thread(target=_process_pdf_job, args=(job_id, tmp_path, fname, replace), daemon=True).start()
+    threading.Thread(target=_process_pdf_job, args=(job_id, tmp_path, sid, fname, replace), daemon=True).start()
 
     return {"job_id": job_id}
 
@@ -219,12 +224,13 @@ def upload_progress(job_id: str):
 
                                                                          
 @app.post("/quiz")
-def quiz_endpoint(req: TopicRequest = TopicRequest()):
-    if not document_text:
+def quiz_endpoint(req: TopicRequest = TopicRequest(), x_session_id: str = Header(default=None)):
+    sess = get_session(_sid(x_session_id))
+    if not sess.document_text:
         return {"questions": []}
 
     topic = (req.topic or "").strip()
-    context = _context_for(topic, k=5)
+    context = _context_for(sess, topic, k=5)
 
     focus = (
         f'Focus the questions on the topic: "{topic}" and closely related ideas '
@@ -262,12 +268,13 @@ Content:
 
                                                                                
 @app.post("/flashcards")
-def flashcards_endpoint(req: TopicRequest = TopicRequest()):
-    if not document_text:
+def flashcards_endpoint(req: TopicRequest = TopicRequest(), x_session_id: str = Header(default=None)):
+    sess = get_session(_sid(x_session_id))
+    if not sess.document_text:
         return {"cards": []}
 
     topic = (req.topic or "").strip()
-    context = _context_for(topic, k=5)
+    context = _context_for(sess, topic, k=5)
 
     focus = (
         f'Focus the cards on the topic: "{topic}" and closely related ideas '
@@ -302,13 +309,13 @@ Content:
 
                                                                          
 @app.post("/chat")
-def chat_endpoint(request: ChatRequest):
-    global chat_history
+def chat_endpoint(request: ChatRequest, x_session_id: str = Header(default=None)):
+    sess = get_session(_sid(x_session_id))
 
     log.info("Chat question: %s", request.message)
 
     try:
-        results = search(request.message, k=6)
+        results = sess.search(request.message, k=6)
     except Exception as e:
         return {"reply": str(e)}
 
@@ -322,8 +329,8 @@ def chat_endpoint(request: ChatRequest):
         if h["source"] not in source_names:
             source_names.append(h["source"])
 
-    chat_history.append({"role": "user", "content": request.message})
-    chat_history = chat_history[-10:]
+    sess.chat_history.append({"role": "user", "content": request.message})
+    sess.chat_history = sess.chat_history[-10:]
 
     messages = [
         {
@@ -355,7 +362,7 @@ Document context:
 """,
         }
     ]
-    messages.extend(chat_history[-10:])
+    messages.extend(sess.chat_history[-10:])
 
     try:
         reply = llm_chat(messages)
@@ -363,30 +370,30 @@ Document context:
         log.error("LLM call failed in /chat: %s", e)
         return {"reply": "The AI service is temporarily unavailable. Please try again in a moment.", "sources": source_names}
 
-    chat_history.append({"role": "assistant", "content": reply})
+    sess.chat_history.append({"role": "assistant", "content": reply})
 
     return {"reply": reply, "sources": source_names}
 
 
 @app.post("/reset_chat")
-def reset_chat():
-    """Clear the server-side conversation history."""
-    global chat_history
-    chat_history = []
+def reset_chat(x_session_id: str = Header(default=None)):
+    """Clear this session's conversation history."""
+    sess = get_session(_sid(x_session_id))
+    sess.chat_history = []
     return {"status": "cleared"}
 
 
 @app.get("/documents")
-def get_documents():
-    """List the documents currently in the combined knowledge base."""
-    return {"documents": list_documents()}
+def get_documents(x_session_id: str = Header(default=None)):
+    """List the documents in this session's knowledge base."""
+    sess = get_session(_sid(x_session_id))
+    return {"documents": sess.list_documents()}
 
 
 @app.post("/clear_documents")
-def clear_documents():
-    """Remove all documents from the knowledge base and clear chat."""
-    global document_text, chat_history
-    reset_index()
-    document_text = ""
-    chat_history = []
+def clear_documents(x_session_id: str = Header(default=None)):
+    """Remove all documents from this session and clear its chat."""
+    sess = get_session(_sid(x_session_id))
+    sess.reset_index()
+    sess.chat_history = []
     return {"status": "cleared", "documents": []}

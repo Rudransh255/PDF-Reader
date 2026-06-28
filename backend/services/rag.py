@@ -2,14 +2,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 import faiss
 import torch
+import time
+import threading
 
 _device = "cuda" if torch.cuda.is_available() else "cpu"
+# the embedding model is read-only and expensive to load, so it is shared
+# safely across all sessions.
 embedding_model = SentenceTransformer("BAAI/bge-small-en-v1.5", device=_device)
-
-index = None
-stored_chunks = []
-stored_sources = []
-documents = []
 
 
 def chunk_text(text):
@@ -20,66 +19,101 @@ def chunk_text(text):
     return splitter.split_text(text)
 
 
-def reset_index():
-    global index, stored_chunks, stored_sources, documents
-    index = None
-    stored_chunks = []
-    stored_sources = []
-    documents = []
+class Session:
+    """Holds one user's private knowledge base and chat history."""
+
+    def __init__(self):
+        self.index = None
+        self.chunks = []
+        self.sources = []
+        self.documents = []
+        self.document_text = ""
+        self.chat_history = []
+        self.last_seen = time.time()
+
+    def touch(self):
+        self.last_seen = time.time()
+
+    def reset_index(self):
+        self.index = None
+        self.chunks = []
+        self.sources = []
+        self.documents = []
+        self.document_text = ""
+
+    def add_document(self, chunks, source="document"):
+        if not chunks:
+            raise ValueError(
+                "No text could be extracted from this PDF. If it is a scanned "
+                "document, check that OCR ran (see logs)."
+            )
+
+        embeddings = embedding_model.encode(chunks, convert_to_numpy=True)
+        if embeddings.ndim != 2 or embeddings.shape[0] == 0:
+            raise ValueError(
+                f"Embedding produced an unexpected shape {embeddings.shape}."
+            )
+
+        dimension = embeddings.shape[1]
+        if self.index is None:
+            self.index = faiss.IndexFlatL2(dimension)
+
+        self.index.add(embeddings)
+        self.chunks.extend(chunks)
+        self.sources.extend([source] * len(chunks))
+        if source not in self.documents:
+            self.documents.append(source)
+        return len(chunks)
+
+    def search(self, query, k=6):
+        if self.index is None:
+            raise Exception("No PDF indexed yet. Upload a PDF first.")
+
+        query_embedding = embedding_model.encode([query], convert_to_numpy=True)
+        k = min(k, len(self.chunks))
+        distances, indices = self.index.search(query_embedding, k)
+
+        results = []
+        for i in indices[0]:
+            if 0 <= i < len(self.chunks):
+                results.append({"text": self.chunks[i], "source": self.sources[i]})
+        return results
+
+    def list_documents(self):
+        return list(self.documents)
 
 
-def add_document(chunks, source="document"):
-    """Add a document's chunks to the combined index, tracking their source."""
-    global index, stored_chunks, stored_sources, documents
+# ---- session registry with idle expiry -------------------------------------
 
-    if not chunks:
-        raise ValueError(
-            "No text could be extracted from this PDF. If it is a scanned "
-            "document, make sure the /upload route uses extract_pdf_text (OCR) "
-            "and check the logs for 'OCR fallback page'."
-        )
-
-    embeddings = embedding_model.encode(chunks, convert_to_numpy=True)
-
-    if embeddings.ndim != 2 or embeddings.shape[0] == 0:
-        raise ValueError(
-            f"Embedding produced an unexpected shape {embeddings.shape}; "
-            "expected a 2D array. Got no usable chunks."
-        )
-
-    dimension = embeddings.shape[1]
-    if index is None:
-        index = faiss.IndexFlatL2(dimension)
-
-    index.add(embeddings)
-    stored_chunks.extend(chunks)
-    stored_sources.extend([source] * len(chunks))
-    if source not in documents:
-        documents.append(source)
-
-    return len(chunks)
+_sessions = {}
+_lock = threading.Lock()
+SESSION_TTL_SECONDS = 60 * 60          # drop sessions idle for > 60 minutes
 
 
-def build_index(chunks, source="document"):
-    """Backwards-compatible single-document build: clears then adds one doc."""
-    reset_index()
-    return add_document(chunks, source=source)
+def get_session(session_id):
+    """Return the Session for this id, creating it if needed. Also reaps
+    sessions that have been idle past the TTL to free memory."""
+    now = time.time()
+    with _lock:
+        # reap idle sessions
+        stale = [sid for sid, s in _sessions.items()
+                 if now - s.last_seen > SESSION_TTL_SECONDS]
+        for sid in stale:
+            _sessions.pop(sid, None)
+
+        sess = _sessions.get(session_id)
+        if sess is None:
+            sess = Session()
+            _sessions[session_id] = sess
+        sess.touch()
+        return sess
 
 
-def search(query, k=6):
-    if index is None:
-        raise Exception("No PDF indexed yet. Upload a PDF first.")
-
-    query_embedding = embedding_model.encode([query], convert_to_numpy=True)
-    k = min(k, len(stored_chunks))
-    distances, indices = index.search(query_embedding, k)
-
-    results = []
-    for i in indices[0]:
-        if 0 <= i < len(stored_chunks):
-            results.append({"text": stored_chunks[i], "source": stored_sources[i]})
-    return results
+def drop_session(session_id):
+    with _lock:
+        _sessions.pop(session_id, None)
 
 
-def list_documents():
-    return list(documents)
+def session_count():
+    with _lock:
+        return len(_sessions)
