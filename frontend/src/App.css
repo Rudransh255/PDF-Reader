@@ -331,7 +331,7 @@
 }
 .lightbox-close:hover { border-color: var(--accent); }
 .saved-remove {
-  position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 6px;
+  position: static; width: 22px; height: 22px; border-radius: 6px;
   border: 1px solid var(--line); background: var(--panel); color: var(--text-dim);
   cursor: pointer; font-size: 16px; line-height: 1; padding: 0;
   display: flex; align-items: center; justify-content: center;
@@ -394,15 +394,12 @@
 @media (max-width: 980px) {
   .columns { grid-template-columns: 1fr; }
   .topbar { flex-direction: column; }
-  /* on mobile, surface the AI Agent first, then Helper, then Notebook */
+
   .panel-chat { order: 1; }
   .panel-helper { order: 2; }
   .panel-notebook { order: 3; }
 }
 
-/* ---- Wave 1+2 UI additions ---- */
-
-/* typing dots */
 .bubble.typing { display: inline-flex; gap: 5px; align-items: center; }
 .bubble.typing .dot {
   width: 7px; height: 7px; border-radius: 50%;
@@ -416,7 +413,6 @@
   30% { transform: translateY(-5px); opacity: 1; }
 }
 
-/* copy toast */
 .toast {
   position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
   background: var(--accent, #6f8bff); color: #fff;
@@ -429,19 +425,15 @@
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
-/* helper action row (generate-more + clear) */
 .helper-actions { display: flex; gap: 8px; margin: 8px 0; }
 .helper-actions .btn { flex: 1; }
 
-/* send button disabled state */
 .send:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* flashcards as a stacked list */
 .flash-list-card { margin-bottom: 14px; }
 .flash-list-card .flashcard { width: 100%; }
 .flash-list-card .link-btn { margin-top: 4px; }
 
-/* upload button spinner */
 .btn-spinner {
   display: inline-block; width: 13px; height: 13px; margin-right: 7px;
   vertical-align: -2px; border: 2px solid rgba(255,255,255,0.4);
@@ -449,3 +441,44 @@
   animation: btn-spin 0.7s linear infinite;
 }
 @keyframes btn-spin { to { transform: rotate(360deg); } }
+
+.saved-item { position: relative; }
+.saved-controls {
+  position: absolute; top: 8px; right: 8px;
+  display: flex; gap: 4px; align-items: center;
+}
+.saved-move {
+  width: 22px; height: 22px; border-radius: 6px; padding: 0;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text-dim);
+  cursor: pointer; font-size: 12px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.saved-move:hover:not(:disabled) { border-color: var(--accent, #6f8bff); color: var(--accent, #6f8bff); }
+.saved-move:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.saved-edit {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; color: var(--text, #e8ebf2);
+  font: inherit; font-size: 13px; line-height: 1.5; margin-top: 6px;
+}
+.saved-edit:focus { outline: none; border-color: var(--accent, #6f8bff); }
+.saved-q-edit { font-weight: 600; min-height: 38px; }
+.saved-a-edit { min-height: 56px; }
+.note-edit { min-height: 70px; }
+
+.insert-block-btn {
+  margin-top: 8px; background: none; border: 1px dashed var(--line);
+  color: var(--text-dim); border-radius: 7px; padding: 4px 10px;
+  font-size: 11px; cursor: pointer; width: 100%;
+}
+.insert-block-btn:hover { border-color: var(--accent, #6f8bff); color: var(--accent, #6f8bff); }
+
+.saved-item.note { background: rgba(111,139,255,0.06); }
+
+.saved-rendered {
+  font-size: 13px; line-height: 1.55; cursor: text; margin-top: 6px;
+}
+.saved-rendered .mathtext { white-space: normal; }
+.saved-rendered:hover { background: rgba(255,255,255,0.02); border-radius: 6px; }
+.saved-placeholder { color: var(--text-dim); font-style: italic; font-size: 12px; }
