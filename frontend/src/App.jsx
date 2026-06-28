@@ -152,8 +152,22 @@ export default function App() {
   const [cardLoading, setCardLoading] = useState(false);
   const [cardIndex, setCardIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const [flippedCards, setFlippedCards] = useState(new Set());
+  const toggleFlip = (ci) => {
+    setFlippedCards((prev) => {
+      const next = new Set(prev);
+      next.has(ci) ? next.delete(ci) : next.add(ci);
+      return next;
+    });
+  };
 
   const [message, setMessage] = useState("");
+  const [toast, setToast] = useState("");
+  const showToast = (msg) => {
+    setToast(msg);
+    window.clearTimeout(showToast._t);
+    showToast._t = window.setTimeout(() => setToast(""), 1800);
+  };
   const [chat, setChat] = useState(_persistedChat?.chat ?? []);
   const [chatLoading, setChatLoading] = useState(false);
   const [lastQuestion, setLastQuestion] = useState(_persistedChat?.lastQuestion ?? "");
@@ -345,7 +359,7 @@ export default function App() {
       }));
       const data = await res.json();
       const fresh = data.questions || [];
-      setQuiz((prev) => (append ? [...prev, ...fresh] : fresh));
+      setQuiz((prev) => (append ? [...fresh, ...prev] : fresh));
     } catch {
       if (!append) setQuiz([]);
     }
@@ -355,7 +369,7 @@ export default function App() {
   const loadFlashcards = async (append = false) => {
     if (!pdfLoaded) return;
     setCardLoading(true);
-    if (!append) { setCardIndex(0); setFlipped(false); }
+    if (!append) { setFlippedCards(new Set()); }
     try {
       const res = await fetch(`${API}/flashcards`, withSession({
         method: "POST",
@@ -367,7 +381,7 @@ export default function App() {
       }));
       const data = await res.json();
       const fresh = data.cards || [];
-      setCards((prev) => (append ? [...prev, ...fresh] : fresh));
+      setCards((prev) => (append ? [...fresh, ...prev] : fresh));
     } catch {
       if (!append) setCards([]);
     }
@@ -553,7 +567,15 @@ export default function App() {
       return `${it.question ? "Q: " + it.question + "\n" : ""}A: ${it.answer}`;
     }).join("\n\n");
     const notes = notebookRef.current?.innerText || "";
-    navigator.clipboard?.writeText([itemsText, notes].filter(Boolean).join("\n\n"));
+    const payload = [itemsText, notes].filter(Boolean).join("\n\n");
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(payload).then(
+        () => showToast("Copied to clipboard"),
+        () => showToast("Copy failed")
+      );
+    } else {
+      showToast("Copy not supported");
+    }
   };
 
   const notebookChars = notebook.replace(/<[^>]*>/g, "").length;
@@ -623,6 +645,7 @@ export default function App() {
 
   return (
     <div className="app">
+      {toast && <div className="toast">{toast}</div>}
       {}
       <header className="topbar">
         <div className="brand">
@@ -679,7 +702,9 @@ export default function App() {
             onClick={() => pdfInputRef.current?.click()}
             disabled={uploadPct !== null}
           >
-            {uploadPct !== null ? "Uploading…" : (docs.length > 0 ? "+ Add PDF" : "Upload PDF")}
+            {uploadPct !== null
+              ? <><span className="btn-spinner" />Uploading {uploadPct}%</>
+              : (docs.length > 0 ? "+ Add PDF" : "Upload PDF")}
           </button>
           <button className="btn ghost" onClick={reset}>Reset</button>
         </div>
@@ -703,6 +728,14 @@ export default function App() {
               <button className="btn block" disabled={!pdfLoaded || quizLoading} onClick={loadQuiz}>
                 {quizLoading ? "Building quiz…" : lastQuestion ? "Generate quiz on this topic" : "Generate quiz from PDF"}
               </button>
+              {quiz.length > 0 && (
+                <div className="helper-actions">
+                  <button className="btn ghost sm" disabled={quizLoading} onClick={() => loadQuiz(true)}>
+                    {quizLoading ? "Adding…" : "+ More questions"}
+                  </button>
+                  <button className="btn ghost sm" onClick={() => { setQuiz([]); setPicked({}); }}>Clear</button>
+                </div>
+              )}
               {pdfLoaded && lastQuestion && (
                 <p className="topic-note">Focused on your last question: <span>{lastQuestion}</span></p>
               )}
@@ -743,11 +776,6 @@ export default function App() {
                   </div>
                 );
               })}
-              {quiz.length > 0 && (
-                <button className="btn ghost block" disabled={quizLoading} onClick={() => loadQuiz(true)}>
-                  {quizLoading ? "Adding more…" : "+ Generate more questions"}
-                </button>
-              )}
             </div>
           )}
 
@@ -756,6 +784,14 @@ export default function App() {
               <button className="btn block" disabled={!pdfLoaded || cardLoading} onClick={loadFlashcards}>
                 {cardLoading ? "Building cards…" : lastQuestion ? "Generate flashcards on this topic" : "Generate flashcards from PDF"}
               </button>
+              {cards.length > 0 && (
+                <div className="helper-actions">
+                  <button className="btn ghost sm" disabled={cardLoading} onClick={() => loadFlashcards(true)}>
+                    {cardLoading ? "Adding…" : "+ More cards"}
+                  </button>
+                  <button className="btn ghost sm" onClick={() => { setCards([]); setFlippedCards(new Set()); }}>Clear</button>
+                </div>
+              )}
               {pdfLoaded && lastQuestion && (
                 <p className="topic-note">Focused on your last question: <span>{lastQuestion}</span></p>
               )}
@@ -767,38 +803,31 @@ export default function App() {
               ) : cards.length === 0 && !cardLoading ? (
                 <div className="helper-empty">
                   <span className="empty-icon">▤</span>
-                  <p>Generate flashcards to start a flip-through deck from your document.</p>
+                  <p>Generate flashcards to build a study deck from your document.</p>
                 </div>
               ) : null}
-              {cards.length > 0 && (
-                <>
-                  <div className={flipped ? "flashcard flipped" : "flashcard"} onClick={() => setFlipped((f) => !f)}>
-                    <div className="flash-inner">
-                      <div className="flash-face front">
-                        <span className="flash-label">Question</span>
-                        <p>{cards[cardIndex].question}</p>
-                        <span className="flash-tip">Click to flip</span>
-                      </div>
-                      <div className="flash-face back">
-                        <span className="flash-label">Answer</span>
-                        <p>{cards[cardIndex].answer}</p>
-                        <span className="flash-tip">Click to flip</span>
+              {cards.map((card, ci) => {
+                const isFlipped = flippedCards.has(ci);
+                return (
+                  <div className="flash-list-card" key={ci}>
+                    <div className={isFlipped ? "flashcard flipped" : "flashcard"} onClick={() => toggleFlip(ci)}>
+                      <div className="flash-inner">
+                        <div className="flash-face front">
+                          <span className="flash-label">Question {ci + 1}</span>
+                          <p>{card.question}</p>
+                          <span className="flash-tip">Click to flip</span>
+                        </div>
+                        <div className="flash-face back">
+                          <span className="flash-label">Answer</span>
+                          <p>{card.answer}</p>
+                          <span className="flash-tip">Click to flip</span>
+                        </div>
                       </div>
                     </div>
+                    <button className="link-btn" onClick={() => importCard(card)}>+ Save to notebook</button>
                   </div>
-                  <div className="flash-nav">
-                    <button className="btn ghost sm" disabled={cardIndex === 0}
-                      onClick={() => { setCardIndex((i) => Math.max(0, i - 1)); setFlipped(false); }}>Prev</button>
-                    <span className="flash-count">{cardIndex + 1} / {cards.length}</span>
-                    <button className="btn ghost sm" disabled={cardIndex === cards.length - 1}
-                      onClick={() => { setCardIndex((i) => Math.min(cards.length - 1, i + 1)); setFlipped(false); }}>Next</button>
-                  </div>
-                  <button className="link-btn" onClick={() => importCard(cards[cardIndex])}>+ Save this card to notebook</button>
-                  <button className="btn ghost block" disabled={cardLoading} onClick={() => loadFlashcards(true)}>
-                    {cardLoading ? "Adding more…" : "+ Generate more cards"}
-                  </button>
-                </>
-              )}
+                );
+              })}
             </div>
           )}
 
@@ -845,7 +874,11 @@ export default function App() {
                 )}
               </div>
             ))}
-            {chatLoading && <div className="bubble bot">…</div>}
+            {chatLoading && (
+              <div className="bubble bot typing">
+                <span className="dot"></span><span className="dot"></span><span className="dot"></span>
+              </div>
+            )}
             <div ref={chatEndRef} />
           </div>
           <div className="suggest-row">
@@ -856,8 +889,8 @@ export default function App() {
           <div className="chat-input">
             <input placeholder="Ask any question about active pages…" value={message}
               onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendMessage()} disabled={!pdfLoaded} />
-            <button className="send" onClick={sendMessage} disabled={!pdfLoaded}>↑</button>
+              onKeyDown={(e) => e.key === "Enter" && message.trim() && sendMessage()} disabled={!pdfLoaded} />
+            <button className="send" onClick={sendMessage} disabled={!pdfLoaded || !message.trim() || chatLoading}>↑</button>
           </div>
         </section>
 
