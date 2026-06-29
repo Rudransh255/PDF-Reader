@@ -718,13 +718,7 @@ export default function App() {
         <div className="brand">
           <span className="logo">
             <svg viewBox="0 0 48 48" width="38" height="38" aria-hidden="true">
-              <defs>
-                <linearGradient id="buddyGrad" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="#43aa8b" />
-                  <stop offset="100%" stopColor="#577590" />
-                </linearGradient>
-              </defs>
-              <path d="M14 6 h13 l9 9 v21 a5 5 0 0 1 -5 5 H14 a5 5 0 0 1 -5 -5 V11 a5 5 0 0 1 5 -5 z" fill="url(#buddyGrad)" />
+              <path d="M14 6 h13 l9 9 v21 a5 5 0 0 1 -5 5 H14 a5 5 0 0 1 -5 -5 V11 a5 5 0 0 1 5 -5 z" fill="#43aa8b" />
               <path d="M27 6 v9 h9" fill="#fff" opacity="0.28" />
               <circle cx="18.5" cy="29" r="2.1" fill="#fff" />
               <circle cx="24" cy="29" r="2.1" fill="#fff" />
