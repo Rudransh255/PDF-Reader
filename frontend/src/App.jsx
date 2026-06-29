@@ -144,10 +144,10 @@ export default function App() {
   const [cardIndex, setCardIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [flippedCards, setFlippedCards] = useState(new Set());
-  const toggleFlip = ci => {
+  const toggleFlip = key => {
     setFlippedCards(prev => {
       const next = new Set(prev);
-      next.has(ci) ? next.delete(ci) : next.add(ci);
+      next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
   };
@@ -538,9 +538,9 @@ export default function App() {
     const el = notebookRef.current;
     while (node && node !== el) {
       if (node.nodeType === 1) {
-        const bg = node.style?.backgroundColor || "";
         if (node.tagName === "MARK") return node;
-        if (bg && /91, *74, *158/.test(bg)) return node;
+        const bg = node.style?.backgroundColor || "";
+        if (bg && bg !== "transparent" && !/rgba?\([^)]*,\s*0\s*\)/.test(bg)) return node;
       }
       node = node.parentNode;
     }
@@ -843,9 +843,10 @@ export default function App() {
                   <p>Generate flashcards to build a study deck from your document.</p>
                 </div> : null}
               {cards.map((card, ci) => {
-            const isFlipped = flippedCards.has(ci);
-            return <div className="flash-list-card" key={ci}>
-                    <div className={isFlipped ? "flashcard flipped" : "flashcard"} onClick={() => toggleFlip(ci)}>
+            const ckey = card.question;
+            const isFlipped = flippedCards.has(ckey);
+            return <div className="flash-list-card" key={ckey}>
+                    <div className={isFlipped ? "flashcard flipped" : "flashcard"} onClick={() => toggleFlip(ckey)}>
                       <div className="flash-inner">
                         <div className="flash-face front">
                           <span className="flash-label">Question {ci + 1}</span>
@@ -907,7 +908,7 @@ export default function App() {
           </div>
           <div className="chat-input">
             <input placeholder="Ask any question about active pages…" value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => e.key === "Enter" && message.trim() && sendMessage()} disabled={!pdfLoaded} />
-            <button className="send" onClick={sendMessage} disabled={!pdfLoaded || !message.trim() || chatLoading}>↑</button>
+            <button className="send" aria-label="Send message" onClick={sendMessage} disabled={!pdfLoaded || !message.trim() || chatLoading}>↑</button>
           </div>
         </section>
 
@@ -933,9 +934,9 @@ export default function App() {
             {savedItems.length > 0 && <div className="saved-list">
                 {savedItems.map((it, idx) => <div className={`saved-item ${it.type}`} key={it.id}>
                     <div className="saved-controls">
-                      <button className="saved-move" title="Move up" disabled={idx === 0} onClick={() => moveSavedItem(it.id, "up")}>↑</button>
-                      <button className="saved-move" title="Move down" disabled={idx === savedItems.length - 1} onClick={() => moveSavedItem(it.id, "down")}>↓</button>
-                      <button className="saved-remove" title="Remove" onClick={() => removeSavedItem(it.id)}>×</button>
+                      <button className="saved-move" aria-label="Move up" title="Move up" disabled={idx === 0} onClick={() => moveSavedItem(it.id, "up")}>↑</button>
+                      <button className="saved-move" aria-label="Move down" title="Move down" disabled={idx === savedItems.length - 1} onClick={() => moveSavedItem(it.id, "down")}>↓</button>
+                      <button className="saved-remove" aria-label="Remove item" title="Remove" onClick={() => removeSavedItem(it.id)}>×</button>
                     </div>
                     <span className="saved-kind">{it.type === "quiz" ? "Quiz" : it.type === "flashcard" ? "Flashcard" : it.type === "answer" ? "AI Answer" : it.type === "note" ? "Note" : "Image"}</span>
                     {it.type === "image" ? it.src ? <img className="saved-img" src={it.src} alt={it.name || "saved"} onClick={() => setLightbox({
@@ -967,7 +968,7 @@ export default function App() {
                   </div>)}
               </div>}
 
-            <div ref={notebookRef} className="notebook-area" contentEditable suppressContentEditableWarning data-placeholder="Write your own notes here, or import quizzes, flashcards, answers, and images above." onInput={syncNotebook} onPaste={handlePaste} onKeyUp={refreshFormats} onMouseUp={refreshFormats} onFocus={refreshFormats} onBlur={() => setActiveFormats({})} />
+            <div ref={notebookRef} className="notebook-area" contentEditable suppressContentEditableWarning role="textbox" aria-multiline="true" aria-label="Notebook" data-placeholder="Write your own notes here, or import quizzes, flashcards, answers, and images above." onInput={syncNotebook} onPaste={handlePaste} onKeyUp={refreshFormats} onMouseUp={refreshFormats} onFocus={refreshFormats} onBlur={() => setActiveFormats({})} />
           </div>
 
           <div className="notebook-foot">
