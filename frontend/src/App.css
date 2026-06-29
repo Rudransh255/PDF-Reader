@@ -1,23 +1,23 @@
 :root {
-  --bg: #E4DDD3;
-  --panel: #F4F0E9;
-  --panel-2: #ECE6DC;
-  --line: #d4cbbd;
-  --line-2: #c2b8a7;
-  --text: #3a352e;
-  --text-dim: #7a7164;
-  --text-hi: #211d17;
-  --accent: #00A19B;
-  --accent-2: #00837e;
-  --accent-soft: rgba(0, 161, 155, 0.14);
-  --green: #2f9e74;
-  --green-bg: rgba(47, 158, 116, 0.16);
-  --red: #d3554f;
-  --red-bg: rgba(211, 85, 79, 0.14);
+  --bg: #2E1F26;
+  --panel: #3a2832;
+  --panel-2: #463039;
+  --line: #543c44;
+  --line-2: #6b4e56;
+  --text: #ede3dd;
+  --text-dim: #b39d92;
+  --text-hi: #fff7f0;
+  --accent: #C87740;
+  --accent-2: #e08c4f;
+  --accent-soft: rgba(200, 119, 64, 0.16);
+  --green: #5bbd86;
+  --green-bg: rgba(91, 189, 134, 0.16);
+  --red: #e0685f;
+  --red-bg: rgba(224, 104, 95, 0.16);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --sans: "Inter", system-ui, -apple-system, sans-serif;
-  --shadow: 0 6px 24px rgba(120, 105, 80, 0.14);
-  --grad: linear-gradient(135deg, #00A19B, #00837e);
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  --grad: linear-gradient(135deg, #C87740, #e08c4f);
 }
 
 * { box-sizing: border-box; }
@@ -117,7 +117,7 @@
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn.primary {
   background: var(--grad); border: none; color: #fff;
-  box-shadow: 0 4px 16px rgba(0, 161, 155, 0.3);
+  box-shadow: 0 4px 16px rgba(200, 119, 64, 0.3);
 }
 .btn.primary:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
 .btn.ghost { background: transparent; }
@@ -180,11 +180,11 @@
 }
 .opt:hover:not(:disabled) { border-color: var(--accent); }
 .opt:disabled { cursor: default; }
-.opt.correct { background: var(--green-bg); border-color: var(--green); color: #1f6b4d; }
-.opt.wrong { background: var(--red-bg); border-color: var(--red); color: #9e3833; }
+.opt.correct { background: var(--green-bg); border-color: var(--green); color: #8fe0b3; }
+.opt.wrong { background: var(--red-bg); border-color: var(--red); color: #f4b4ae; }
 .tag {
   font-size: 10px; font-family: var(--mono); padding: 2px 6px; border-radius: 5px;
-  background: rgba(0,0,0,0.06);
+  background: rgba(255,255,255,0.08);
 }
 .link-btn {
   align-self: flex-start; background: none; border: none; color: var(--accent);
@@ -497,7 +497,7 @@
 
 .saved-edit {
   width: 100%; box-sizing: border-box; resize: vertical;
-  background: rgba(0,0,0,0.025); border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04); border: 1px solid var(--line);
   border-radius: 8px; padding: 8px 10px; color: var(--text, #e8ebf2);
   font: inherit; font-size: 13px; line-height: 1.5; margin-top: 6px;
 }
@@ -513,11 +513,11 @@
 }
 .insert-block-btn:hover { border-color: var(--accent); color: var(--accent); }
 
-.saved-item.note { background: rgba(0,161,155,0.06); }
+.saved-item.note { background: rgba(200,119,64,0.07); }
 
 .saved-rendered {
   font-size: 13px; line-height: 1.55; cursor: text; margin-top: 6px;
 }
 .saved-rendered .mathtext { white-space: normal; }
-.saved-rendered:hover { background: rgba(0,0,0,0.025); border-radius: 6px; }
+.saved-rendered:hover { background: rgba(255,255,255,0.03); border-radius: 6px; }
 .saved-placeholder { color: var(--text-dim); font-style: italic; font-size: 12px; }
