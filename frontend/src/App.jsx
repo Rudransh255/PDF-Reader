@@ -276,7 +276,7 @@ export default function App() {
           } catch {}
           if (xhr.status >= 200 && xhr.status < 300 && parsed.job_id) resolve(parsed);else reject(new Error(parsed.error || `Upload failed (HTTP ${xhr.status}).`));
         };
-        xhr.onerror = () => reject(new Error("Network error. Is the backend reachable?"));
+        xhr.onerror = () => reject(new Error("Couldn't upload right now. Please check your connection and try again."));
         xhr.send(formData);
       });
       const data = await new Promise((resolve, reject) => {
@@ -313,7 +313,11 @@ export default function App() {
       setStaleChat(false);
     } catch (err) {
       setUploadError(true);
-      setUploadStatus(err.message || "Upload failed.");
+      const msg = err?.message || "";
+      const friendly = /large|100 MB|pdf|accepted/i.test(msg)
+        ? msg
+        : "Upload didn't go through. Please try again.";
+      setUploadStatus(friendly);
     } finally {
       setUploadPct(null);
     }
@@ -413,7 +417,7 @@ export default function App() {
     } catch {
       setChat(c => [...c, {
         role: "assistant",
-        content: "Couldn't reach the backend."
+        content: "Something went wrong. Please try again in a moment."
       }]);
     }
     setChatLoading(false);
@@ -700,11 +704,11 @@ export default function App() {
     w.document.close();
     w.onload = () => setTimeout(() => w.print(), 300);
   };
-  const pickOption = (qi, oi) => {
-    if (picked[qi] !== undefined) return;
+  const pickOption = (qkey, oi) => {
+    if (picked[qkey] !== undefined) return;
     setPicked(p => ({
       ...p,
-      [qi]: oi
+      [qkey]: oi
     }));
   };
   return <div className="app">
@@ -800,9 +804,10 @@ export default function App() {
                   <p>Ready when you are. Generate a quiz to get four questions drawn from your document.</p>
                 </div> : null}
               {quiz.map((item, qi) => {
-            const chosen = picked[qi];
+            const qkey = item.question;
+            const chosen = picked[qkey];
             const answered = chosen !== undefined;
-            return <div className="quiz-card" key={qi}>
+            return <div className="quiz-card" key={qkey}>
                     <p className="quiz-q">{qi + 1}. {item.question}</p>
                     <div className="quiz-opts">
                       {item.options.map((opt, oi) => {
@@ -810,7 +815,7 @@ export default function App() {
                   if (answered) {
                     if (oi === item.answer) cls += " correct";else if (oi === chosen) cls += " wrong";
                   }
-                  return <button key={oi} className={cls} disabled={answered} onClick={() => pickOption(qi, oi)}>
+                  return <button key={oi} className={cls} disabled={answered} onClick={() => pickOption(qkey, oi)}>
                             {opt}
                             {answered && oi === item.answer && <span className="tag">Correct</span>}
                             {answered && oi === chosen && oi !== item.answer && <span className="tag">Your pick</span>}
