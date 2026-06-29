@@ -589,7 +589,7 @@ export default function App() {
         document.execCommand("removeFormat");
       } else {
         document.execCommand("styleWithCSS", false, true);
-        document.execCommand("hiliteColor", false, "#5b4a9e");
+        document.execCommand("hiliteColor", false, "#00A19B");
       }
     } else {
       const cmd = {
@@ -720,8 +720,8 @@ export default function App() {
             <svg viewBox="0 0 48 48" width="38" height="38" aria-hidden="true">
               <defs>
                 <linearGradient id="buddyGrad" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="#6f8bff" />
-                  <stop offset="100%" stopColor="#b06bff" />
+                  <stop offset="0%" stopColor="#00A19B" />
+                  <stop offset="100%" stopColor="#00837e" />
                 </linearGradient>
               </defs>
               <path d="M14 6 h13 l9 9 v21 a5 5 0 0 1 -5 5 H14 a5 5 0 0 1 -5 -5 V11 a5 5 0 0 1 5 -5 z" fill="url(#buddyGrad)" />
