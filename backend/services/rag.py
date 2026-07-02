@@ -88,6 +88,7 @@ class Session:
 _sessions = {}
 _lock = threading.Lock()
 SESSION_TTL_SECONDS = 60 * 60          # drop sessions idle for > 60 minutes
+MAX_SESSIONS = 300                     # hard cap: evict least-recently-used
 
 
 def get_session(session_id):
@@ -103,6 +104,11 @@ def get_session(session_id):
 
         sess = _sessions.get(session_id)
         if sess is None:
+            # a flood of new session ids must not exhaust memory: each session
+            # can hold a FAISS index, so evict the least-recently-used first
+            while len(_sessions) >= MAX_SESSIONS:
+                oldest = min(_sessions, key=lambda sid: _sessions[sid].last_seen)
+                _sessions.pop(oldest, None)
             sess = Session()
             _sessions[session_id] = sess
         sess.touch()

@@ -44,6 +44,8 @@ const loadChat = () => {
   }
 };
 const _persistedChat = typeof window !== "undefined" ? loadChat() : null;
+let _idc = 0;
+const newId = () => `${Date.now()}-${_idc++}-${Math.random().toString(36).slice(2, 6)}`;
 const IDB_NAME = "pdfBuddyImages";
 const IDB_STORE = "images";
 function idbOpen() {
@@ -141,8 +143,6 @@ export default function App() {
   const [picked, setPicked] = useState({});
   const [cards, setCards] = useState([]);
   const [cardLoading, setCardLoading] = useState(false);
-  const [cardIndex, setCardIndex] = useState(0);
-  const [flipped, setFlipped] = useState(false);
   const [flippedCards, setFlippedCards] = useState(new Set());
   const toggleFlip = key => {
     setFlippedCards(prev => {
@@ -333,8 +333,7 @@ export default function App() {
     setLastQuestion("");
     setStaleChat(false);
     setPicked({});
-    setCardIndex(0);
-    setFlipped(false);
+    setFlippedCards(new Set());
     setDocs([]);
     fetch(`${API}/clear_documents`, withSession({
       method: "POST"
@@ -449,8 +448,6 @@ export default function App() {
     }
     syncNotebook();
   };
-  let _idc = 0;
-  const newId = () => `${Date.now()}-${_idc++}-${Math.random().toString(36).slice(2, 6)}`;
   const addSavedItem = item => setSavedItems(s => [...s, {
     id: newId(),
     ...item
@@ -597,7 +594,7 @@ export default function App() {
         document.execCommand("removeFormat");
       } else {
         document.execCommand("styleWithCSS", false, true);
-        document.execCommand("hiliteColor", false, "rgba(249, 199, 79, 0.35)");
+        document.execCommand("hiliteColor", false, "rgba(249, 199, 79, 0.5)");
       }
     } else {
       const cmd = {
@@ -726,7 +723,7 @@ export default function App() {
         <div className="brand">
           <span className="logo">
             <svg viewBox="0 0 48 48" width="38" height="38" aria-hidden="true">
-              <path d="M14 6 h13 l9 9 v21 a5 5 0 0 1 -5 5 H14 a5 5 0 0 1 -5 -5 V11 a5 5 0 0 1 5 -5 z" fill="#43aa8b" />
+              <path d="M14 6 h13 l9 9 v21 a5 5 0 0 1 -5 5 H14 a5 5 0 0 1 -5 -5 V11 a5 5 0 0 1 5 -5 z" fill="#2f6b4e" />
               <path d="M27 6 v9 h9" fill="#fff" opacity="0.28" />
               <circle cx="18.5" cy="29" r="2.1" fill="#fff" />
               <circle cx="24" cy="29" r="2.1" fill="#fff" />
@@ -915,7 +912,7 @@ export default function App() {
             {["Key facts", "Methodology", "Explain basic concepts"].map(s => <button key={s} className="chip" onClick={() => setMessage(s)}>{s}</button>)}
           </div>
           <div className="chat-input">
-            <input placeholder="Ask any question about active pages…" value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => e.key === "Enter" && message.trim() && sendMessage()} disabled={!pdfLoaded} />
+            <input placeholder="Ask any question about active pages…" value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => e.key === "Enter" && !chatLoading && message.trim() && sendMessage()} disabled={!pdfLoaded} />
             <button className="send" aria-label="Send message" onClick={sendMessage} disabled={!pdfLoaded || !message.trim() || chatLoading}>↑</button>
           </div>
         </section>

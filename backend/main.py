@@ -128,18 +128,66 @@ def _context_for(sess, topic: str, k: int = 5):
     hits = sess.search(query, k=k)
     return "\n\n".join(h["text"] for h in hits)
 
+
+def _avoid_note(avoid, kind="questions"):
+    if not avoid:
+        return ""
+    existing = "; ".join(str(a)[:300] for a in avoid[:20])
+    return (
+        f"\nDo NOT repeat or rephrase any of these existing {kind}; "
+        f"write entirely new ones covering different points: {existing}\n"
+    )
+
+
+def _clean_questions(items):
+    """Keep only well-formed MCQs so bad model output can't break the client."""
+    out = []
+    for q in items if isinstance(items, list) else []:
+        if not isinstance(q, dict):
+            continue
+        text, opts, ans = q.get("question"), q.get("options"), q.get("answer")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if not isinstance(opts, list) or len(opts) < 2:
+            continue
+        opts = [str(o) for o in opts]
+        if not isinstance(ans, int) or not 0 <= ans < len(opts):
+            continue
+        out.append({"question": text.strip(), "options": opts, "answer": ans})
+    return out
+
+
+def _clean_cards(items):
+    out = []
+    for c in items if isinstance(items, list) else []:
+        if not isinstance(c, dict):
+            continue
+        q, a = c.get("question"), c.get("answer")
+        if isinstance(q, str) and q.strip() and isinstance(a, str) and a.strip():
+            out.append({"question": q.strip(), "answer": a.strip()})
+    return out
+
                                                                            
+import time
 import uuid
 import threading
 
-# in-memory progress tracker: job_id -> {stage, pct, done, result/error}
+# in-memory progress tracker: job_id -> {stage, pct, done, result/error, ts}
 _jobs = {}
+JOB_TTL_SECONDS = 30 * 60
+
+
+def _reap_jobs():
+    """Drop finished/abandoned jobs so the tracker can't grow forever."""
+    now = time.time()
+    for jid in [j for j, job in _jobs.items() if now - job.get("ts", 0) > JOB_TTL_SECONDS]:
+        _jobs.pop(jid, None)
 
 
 def _process_pdf_job(job_id, tmp_path, session_id, filename="document", replace=False):
     try:
         sess = get_session(session_id)
-        _jobs[job_id] = {"stage": "Extracting text", "pct": 35, "done": False, "error": None, "result": None}
+        _jobs[job_id].update({"stage": "Extracting text", "pct": 35})
         result = extract_pdf_text(tmp_path)
 
         method = result.get("method", "text")
@@ -160,7 +208,7 @@ def _process_pdf_job(job_id, tmp_path, session_id, filename="document", replace=
             sess.reset_index()
         sess.add_document(chunks, source=filename)
 
-        _jobs[job_id] = {
+        _jobs[job_id].update({
             "stage": "Done", "pct": 100, "done": True, "error": None,
             "result": {
                 "characters": len(sess.document_text),
@@ -170,10 +218,13 @@ def _process_pdf_job(job_id, tmp_path, session_id, filename="document", replace=
                 "warning": result.get("warning"),
                 "documents": sess.list_documents(),
             },
-        }
+        })
     except Exception as e:
-        log.error("Upload job failed: %s", e)
-        _jobs[job_id] = {"stage": "Error", "pct": 100, "done": True, "error": str(e), "result": None}
+        log.exception("Upload job failed")
+        # our own ValueErrors carry user-friendly text; anything else stays internal
+        msg = str(e) if isinstance(e, ValueError) else \
+            "Could not process this PDF. It may be corrupted or password-protected."
+        _jobs[job_id].update({"stage": "Error", "pct": 100, "done": True, "error": msg, "result": None})
     finally:
         try:
             os.remove(tmp_path)
@@ -189,11 +240,23 @@ async def upload_pdf(file: UploadFile = File(...), replace: bool = False,
         return JSONResponse(status_code=400, content={"error": "Only .pdf files are accepted."})
 
     total = 0
+    first_chunk = True
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         while True:
             chunk = await file.read(1024 * 1024)
             if not chunk:
                 break
+            if first_chunk:
+                first_chunk = False
+                # the PDF header must appear near the start of the file;
+                # a renamed non-PDF fails here instead of deep in extraction
+                if b"%PDF" not in chunk[:1024]:
+                    tmp.close()
+                    try:
+                        os.remove(tmp.name)
+                    except OSError:
+                        pass
+                    return JSONResponse(status_code=400, content={"error": "This file does not look like a PDF."})
             total += len(chunk)
             if total > MAX_UPLOAD_BYTES:
                 tmp.close()
@@ -205,11 +268,20 @@ async def upload_pdf(file: UploadFile = File(...), replace: bool = False,
             tmp.write(chunk)
         tmp_path = tmp.name
 
+    if total == 0:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        return JSONResponse(status_code=400, content={"error": "The uploaded file is empty."})
+
     fname = file.filename or "document"
     sid = _sid(x_session_id)
     # start processing in a background thread; client polls /progress/{job_id}
+    _reap_jobs()
     job_id = uuid.uuid4().hex
-    _jobs[job_id] = {"stage": "Queued", "pct": 30, "done": False, "error": None, "result": None}
+    _jobs[job_id] = {"stage": "Queued", "pct": 30, "done": False, "error": None, "result": None,
+                     "ts": time.time()}
     threading.Thread(target=_process_pdf_job, args=(job_id, tmp_path, sid, fname, replace), daemon=True).start()
 
     return {"job_id": job_id}
@@ -220,7 +292,10 @@ def upload_progress(job_id: str):
     job = _jobs.get(job_id)
     if not job:
         return JSONResponse(status_code=404, content={"error": "Unknown job id."})
-    return job
+    if job.get("done"):
+        # final state has been delivered; free the slot
+        _jobs.pop(job_id, None)
+    return {k: v for k, v in job.items() if k != "ts"}
 
                                                                          
 @app.post("/quiz")
@@ -239,13 +314,7 @@ def quiz_endpoint(req: TopicRequest = TopicRequest(), x_session_id: str = Header
         else "Cover the most important ideas in the content.\n"
     )
 
-    avoid_note = ""
-    if req.avoid:
-        existing = "; ".join(req.avoid[:20])
-        avoid_note = (
-            f"\nDo NOT repeat or rephrase any of these existing questions; "
-            f"write entirely new ones covering different points: {existing}\n"
-        )
+    avoid_note = _avoid_note(req.avoid, "questions")
 
     prompt = f"""
 Using ONLY the content below, write 4 multiple-choice questions.
@@ -262,9 +331,10 @@ Content:
 """
     try:
         data = _ask_json(prompt)
-        return {"questions": data.get("questions", []), "topic": topic}
-    except Exception as e:
-        return {"questions": [], "error": str(e)}
+        return {"questions": _clean_questions(data.get("questions")), "topic": topic}
+    except Exception:
+        log.exception("Quiz generation failed")
+        return {"questions": [], "error": "Could not generate a quiz right now. Please try again."}
 
                                                                                
 @app.post("/flashcards")
@@ -283,13 +353,7 @@ def flashcards_endpoint(req: TopicRequest = TopicRequest(), x_session_id: str = 
         else "Cover the most important ideas in the content.\n"
     )
 
-    avoid_note = ""
-    if req.avoid:
-        existing = "; ".join(req.avoid[:20])
-        avoid_note = (
-            f"\nDo NOT repeat or rephrase any of these existing cards; write "
-            f"entirely new ones covering different points: {existing}\n"
-        )
+    avoid_note = _avoid_note(req.avoid, "cards")
 
     prompt = f"""
 Using ONLY the content below, write 6 study flashcards.
@@ -303,9 +367,10 @@ Content:
 """
     try:
         data = _ask_json(prompt)
-        return {"cards": data.get("cards", []), "topic": topic}
-    except Exception as e:
-        return {"cards": [], "error": str(e)}
+        return {"cards": _clean_cards(data.get("cards")), "topic": topic}
+    except Exception:
+        log.exception("Flashcard generation failed")
+        return {"cards": [], "error": "Could not generate flashcards right now. Please try again."}
 
                                                                          
 @app.post("/chat")
