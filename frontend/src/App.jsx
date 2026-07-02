@@ -357,7 +357,11 @@ export default function App() {
       }));
       const data = await res.json();
       const fresh = data.questions || [];
-      setQuiz(prev => append ? [...fresh, ...prev] : fresh);
+      setQuiz(prev => {
+        if (!append) return fresh;
+        const seen = new Set(prev.map(q => q.question));
+        return [...fresh.filter(q => !seen.has(q.question)), ...prev];
+      });
     } catch {
       if (!append) setQuiz([]);
     }
@@ -382,7 +386,11 @@ export default function App() {
       }));
       const data = await res.json();
       const fresh = data.cards || [];
-      setCards(prev => append ? [...fresh, ...prev] : fresh);
+      setCards(prev => {
+        if (!append) return fresh;
+        const seen = new Set(prev.map(c => c.question));
+        return [...fresh.filter(c => !seen.has(c.question)), ...prev];
+      });
     } catch {
       if (!append) setCards([]);
     }
@@ -589,7 +597,7 @@ export default function App() {
         document.execCommand("removeFormat");
       } else {
         document.execCommand("styleWithCSS", false, true);
-        document.execCommand("hiliteColor", false, "#f9c74f");
+        document.execCommand("hiliteColor", false, "rgba(249, 199, 79, 0.35)");
       }
     } else {
       const cmd = {
