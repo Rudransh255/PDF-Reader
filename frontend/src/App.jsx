@@ -909,7 +909,7 @@ ${katexCss}<style>
             </svg>
           </span>
           <div>
-            <h1>PDF <span>Buddy</span> {pdfLoaded && <em className="pages-pill">{pageCount} pages</em>}</h1>
+            <h1>PDF <span>Buddy</span> {pdfLoaded && <em className="pages-pill">{pageCount} {pageCount === 1 ? "page" : "pages"}</em>}</h1>
             <p className={uploadError ? "doc-status err" : "doc-status"}>Active document: {uploadStatus}</p>
             {docs.length > 0 && <div className="doc-chips">
                 {docs.map((d, i) => <span className="doc-chip" key={i} title={d}>{d}</span>)}
