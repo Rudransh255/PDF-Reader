@@ -286,7 +286,26 @@ textarea:focus:not(:focus-visible) { outline: none; }
   border-radius: 6px; padding: 7px 14px; font-size: 12px; cursor: pointer; font-family: var(--sans);
 }
 .chip:hover { border-color: var(--accent); color: var(--accent); }
-.chat-input { display: flex; gap: 8px; }
+.chat-input { display: flex; gap: 8px; position: relative; }
+.mention-pop {
+  position: absolute; bottom: calc(100% + 6px); left: 0; right: 52px;
+  background: var(--field); border: 1px solid var(--line-2);
+  border-radius: 8px; padding: 4px; z-index: 40;
+  box-shadow: 0 8px 24px rgba(60, 48, 20, 0.16);
+  display: flex; flex-direction: column; max-height: 220px; overflow-y: auto;
+}
+.mention-title {
+  font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-dim); padding: 5px 9px 3px;
+}
+.mention-item {
+  border: none; background: transparent; text-align: left; cursor: pointer;
+  font-family: var(--sans); font-size: 13px; color: var(--text);
+  padding: 7px 9px; border-radius: 5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mention-item:hover { background: var(--panel-2); }
+.mention-item.on { background: var(--accent-soft); color: var(--text-hi); }
 .send {
   flex: none; width: 44px; border-radius: 6px; border: none;
   background: var(--accent); color: #fff; cursor: pointer; font-size: 16px;

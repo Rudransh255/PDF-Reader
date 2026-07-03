@@ -65,18 +65,26 @@ class Session:
             self.documents.append(source)
         return len(chunks)
 
-    def search(self, query, k=6):
+    def search(self, query, k=6, sources=None):
+        """Top-k chunks for the query; optionally restricted to the given
+        source documents (fetches a wider net first, then filters)."""
         if self.index is None:
             raise Exception("No PDF indexed yet. Upload a PDF first.")
 
         query_embedding = embedding_model.encode([query], convert_to_numpy=True)
-        k = min(k, len(self.chunks))
-        distances, indices = self.index.search(query_embedding, k)
+        total = len(self.chunks)
+        fetch = min(total, max(k * 10, 60) if sources else k)
+        distances, indices = self.index.search(query_embedding, fetch)
 
         results = []
         for i in indices[0]:
-            if 0 <= i < len(self.chunks):
-                results.append({"text": self.chunks[i], "source": self.sources[i]})
+            if not 0 <= i < total:
+                continue
+            if sources and self.sources[i] not in sources:
+                continue
+            results.append({"text": self.chunks[i], "source": self.sources[i]})
+            if len(results) >= k:
+                break
         return results
 
     def list_documents(self):

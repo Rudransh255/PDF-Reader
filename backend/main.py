@@ -125,6 +125,8 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    # optional @-mention filter: restrict retrieval to these documents
+    documents: list[str] = Field(default_factory=list, max_length=10)
 
 class TopicRequest(BaseModel):
     topic: str = Field(default="", max_length=500)
@@ -439,10 +441,22 @@ def chat_endpoint(request: ChatRequest, x_session_id: str = Header(default=None)
 
     log.info("Chat question: %s", request.message)
 
+    # only accept filters naming documents that actually exist in this session
+    known = sess.list_documents()
+    focus_docs = [d for d in request.documents if d in known]
+
     try:
-        results = sess.search(request.message, k=6)
+        results = sess.search(request.message, k=6, sources=focus_docs or None)
     except Exception as e:
         return {"reply": str(e)}
+
+    if focus_docs and not results:
+        return {
+            "reply": "I couldn't find anything relevant in "
+                     + ", ".join(focus_docs)
+                     + " for that question. Try rephrasing, or ask without the @mention to search all documents.",
+            "sources": [],
+        }
 
     log.debug("Retrieved %d chunks", len(results))
 
@@ -479,6 +493,7 @@ Guidelines:
   the user asked for.
 - Reply in the SAME language the user wrote their latest message in.
 - If the answer is not in the context, say so plainly instead of guessing.
+{f"- The user directed this question at: {', '.join(focus_docs)} (referenced with @ in their message). The context contains only those documents; answer from them." if focus_docs else ""}
 - For mathematical expressions, use LaTeX: inline math in \\( ... \\) and block
   equations in \\[ ... \\].
 

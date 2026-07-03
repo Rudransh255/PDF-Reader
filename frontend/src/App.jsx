@@ -224,6 +224,8 @@ export default function App() {
   };
   const [chat, setChat] = useState(_persistedChat?.chat ?? []);
   const [chatLoading, setChatLoading] = useState(false);
+  const [mention, setMention] = useState(null);
+  const chatInputRef = useRef(null);
   const [lastQuestion, setLastQuestion] = useState(_persistedChat?.lastQuestion ?? "");
   const [staleChat, setStaleChat] = useState((_persistedChat?.chat ?? []).length > 0);
   const [notebookTitle, setNotebookTitle] = useState(_persisted?.title ?? "Research Notebook");
@@ -453,15 +455,81 @@ export default function App() {
     }
     setCardLoading(false);
   };
+  // @-mention picker: typing "@" in the chat input suggests loaded PDFs so a
+  // question can be aimed at specific documents
+  const updateMention = (val, caret) => {
+    if (docs.length === 0) {
+      setMention(null);
+      return;
+    }
+    const before = val.slice(0, caret);
+    const at = before.lastIndexOf("@");
+    if (at === -1) {
+      setMention(null);
+      return;
+    }
+    const query = before.slice(at + 1);
+    if (query.length > 80) {
+      setMention(null);
+      return;
+    }
+    const matches = docs.filter(d => d.toLowerCase().includes(query.toLowerCase())).slice(0, 6);
+    if (matches.length === 0) {
+      setMention(null);
+      return;
+    }
+    setMention({
+      at,
+      query,
+      matches,
+      index: 0
+    });
+  };
+  const pickMention = doc => {
+    if (!mention) return;
+    const end = mention.at + 1 + mention.query.length;
+    setMessage(message.slice(0, mention.at) + "@" + doc + " " + message.slice(end));
+    setMention(null);
+    chatInputRef.current?.focus();
+  };
+  const onChatChange = e => {
+    setMessage(e.target.value);
+    updateMention(e.target.value, e.target.selectionStart ?? e.target.value.length);
+  };
+  const onChatKeyDown = e => {
+    if (mention) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const dir = e.key === "ArrowDown" ? 1 : -1;
+        setMention(m => ({
+          ...m,
+          index: (m.index + dir + m.matches.length) % m.matches.length
+        }));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        pickMention(mention.matches[mention.index]);
+        return;
+      }
+      if (e.key === "Escape") {
+        setMention(null);
+        return;
+      }
+    }
+    if (e.key === "Enter" && !chatLoading && message.trim()) sendMessage();
+  };
   const sendMessage = async () => {
     if (!message.trim()) return;
     const q = message;
+    const mentioned = docs.filter(d => q.includes("@" + d)).slice(0, 10);
     setChat(c => [...c, {
       role: "user",
       content: q
     }]);
     setLastQuestion(q);
     setMessage("");
+    setMention(null);
     setChatLoading(true);
     try {
       const res = await fetch(`${API}/chat`, withSession({
@@ -470,7 +538,8 @@ export default function App() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          message: q
+          message: q,
+          documents: mentioned
         })
       }));
       const data = await res.json();
@@ -1021,7 +1090,11 @@ ${katexCss}<style>
             {["Key facts", "Methodology", "Explain basic concepts"].map(s => <button key={s} className="chip" onClick={() => setMessage(s)}>{s}</button>)}
           </div>
           <div className="chat-input">
-            <input placeholder="Ask any question about active pages…" value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => e.key === "Enter" && !chatLoading && message.trim() && sendMessage()} disabled={!pdfLoaded} />
+            {mention && <div className="mention-pop" role="listbox" aria-label="Mention a PDF">
+                <div className="mention-title">Ask a specific PDF</div>
+                {mention.matches.map((d, i) => <button key={d} role="option" aria-selected={i === mention.index} className={i === mention.index ? "mention-item on" : "mention-item"} onMouseDown={e => e.preventDefault()} onClick={() => pickMention(d)}>{d}</button>)}
+              </div>}
+            <input ref={chatInputRef} placeholder={docs.length > 1 ? "Ask a question… type @ to target one PDF" : "Ask any question about active pages…"} value={message} onChange={onChatChange} onKeyDown={onChatKeyDown} onBlur={() => setMention(null)} disabled={!pdfLoaded} />
             <button className="send" aria-label="Send message" onClick={sendMessage} disabled={!pdfLoaded || !message.trim() || chatLoading}>↑</button>
           </div>
         </section>
