@@ -46,6 +46,54 @@ const loadChat = () => {
 const _persistedChat = typeof window !== "undefined" ? loadChat() : null;
 let _idc = 0;
 const newId = () => `${Date.now()}-${_idc++}-${Math.random().toString(36).slice(2, 6)}`;
+// migration: freeform notes written before the composer existed become a
+// regular note block so the content stays visible and editable
+const _initialItems = (() => {
+  const items = _persisted?.items ?? [];
+  const legacy = _persisted?.notes;
+  if (legacy && legacy.replace(/<[^>]*>/g, "").trim()) {
+    return [...items, {
+      id: newId(),
+      type: "note",
+      html: legacy
+    }];
+  }
+  return items;
+})();
+const richHostOf = node => {
+  if (!node) return null;
+  const el = node.nodeType === 3 ? node.parentNode : node;
+  return el?.closest?.(".rich-edit") || null;
+};
+const highlightNodeAt = () => {
+  const sel = window.getSelection();
+  let node = sel && sel.anchorNode;
+  const host = richHostOf(node);
+  if (!host) return null;
+  while (node && node !== host) {
+    if (node.nodeType === 1) {
+      if (node.tagName === "MARK") return node;
+      const bg = node.style?.backgroundColor || "";
+      if (bg && bg !== "transparent" && !/rgba?\([^)]*,\s*0\s*\)/.test(bg)) return node;
+    }
+    node = node.parentNode;
+  }
+  return null;
+};
+const inHighlight = () => !!highlightNodeAt();
+const safeState = cmd => {
+  try {
+    return document.queryCommandState(cmd);
+  } catch {
+    return false;
+  }
+};
+const readFormats = () => ({
+  bold: safeState("bold"),
+  italic: safeState("italic"),
+  bullets: safeState("insertUnorderedList"),
+  highlight: inHighlight()
+});
 const IDB_NAME = "pdfBuddyImages";
 const IDB_STORE = "images";
 function idbOpen() {
@@ -163,11 +211,11 @@ export default function App() {
   const [lastQuestion, setLastQuestion] = useState(_persistedChat?.lastQuestion ?? "");
   const [staleChat, setStaleChat] = useState((_persistedChat?.chat ?? []).length > 0);
   const [notebookTitle, setNotebookTitle] = useState(_persisted?.title ?? "Research Notebook");
-  const [notebook, setNotebook] = useState(_persisted?.notes ?? "");
   const [activeFormats, setActiveFormats] = useState({});
-  const [savedItems, setSavedItems] = useState(_persisted?.items ?? []);
+  const [savedItems, setSavedItems] = useState(_initialItems);
   const [editingId, setEditingId] = useState(null);
-  const notebookRef = useRef(null);
+  const [menuPos, setMenuPos] = useState(null);
+  const composerRef = useRef(null);
   const imageInputRef = useRef(null);
   const chatEndRef = useRef(null);
   const pdfInputRef = useRef(null);
@@ -178,11 +226,6 @@ export default function App() {
   }, [chat, chatLoading]);
   const [lightbox, setLightbox] = useState(null);
   useEffect(() => {
-    if (notebookRef.current && notebook) {
-      notebookRef.current.innerHTML = DOMPurify.sanitize(notebook);
-    }
-  }, []);
-  useEffect(() => {
     try {
       const itemsForStorage = savedItems.map(it => it.type === "image" ? {
         id: it.id,
@@ -192,13 +235,12 @@ export default function App() {
       } : it);
       localStorage.setItem(LS_KEY, JSON.stringify({
         title: notebookTitle,
-        notes: notebook,
         items: itemsForStorage
       }));
     } catch (e) {
       console.warn("Could not save notebook to localStorage:", e);
     }
-  }, [notebookTitle, notebook, savedItems]);
+  }, [notebookTitle, savedItems]);
   useEffect(() => {
     const imageItems = (_persisted?.items ?? []).filter(it => it.type === "image" && it.imgId);
     if (imageItems.length === 0) return;
@@ -429,9 +471,6 @@ export default function App() {
     }
     setChatLoading(false);
   };
-  const syncNotebook = () => {
-    if (notebookRef.current) setNotebook(notebookRef.current.innerHTML);
-  };
   const handlePaste = e => {
     e.preventDefault();
     const text = (e.clipboardData || window.clipboardData).getData("text/plain");
@@ -443,10 +482,7 @@ export default function App() {
       range.collapse(false);
       sel.removeAllRanges();
       sel.addRange(range);
-    } else if (notebookRef.current) {
-      notebookRef.current.appendChild(document.createTextNode(text));
     }
-    syncNotebook();
   };
   const addSavedItem = item => setSavedItems(s => [...s, {
     id: newId(),
@@ -468,18 +504,6 @@ export default function App() {
     if (j < 0 || j >= s.length) return s;
     const next = [...s];
     [next[i], next[j]] = [next[j], next[i]];
-    return next;
-  });
-  const addTextBlock = (afterId = null) => setSavedItems(s => {
-    const block = {
-      id: newId(),
-      type: "note",
-      text: ""
-    };
-    if (!afterId) return [...s, block];
-    const i = s.findIndex(it => it.id === afterId);
-    const next = [...s];
-    next.splice(i + 1, 0, block);
     return next;
   });
   const importQuizQuestion = qi => {
@@ -535,49 +559,28 @@ export default function App() {
     reader.readAsDataURL(f);
     e.target.value = "";
   };
-  const highlightNodeAt = point => {
-    const sel = window.getSelection();
-    const start = point || sel && sel.anchorNode;
-    if (!start) return null;
-    let node = start;
-    const el = notebookRef.current;
-    while (node && node !== el) {
-      if (node.nodeType === 1) {
-        if (node.tagName === "MARK") return node;
-        const bg = node.style?.backgroundColor || "";
-        if (bg && bg !== "transparent" && !/rgba?\([^)]*,\s*0\s*\)/.test(bg)) return node;
+  useEffect(() => {
+    const onSelection = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !richHostOf(sel.anchorNode)) {
+        setMenuPos(null);
+        return;
       }
-      node = node.parentNode;
-    }
-    return null;
-  };
-  const inHighlight = () => !!highlightNodeAt();
-  const refreshFormats = () => {
-    const el = notebookRef.current;
-    if (!el) return;
-    const sel = window.getSelection();
-    if (!sel || !sel.anchorNode || !el.contains(sel.anchorNode)) {
-      setActiveFormats({});
-      return;
-    }
-    setActiveFormats({
-      bold: safeState("bold"),
-      italic: safeState("italic"),
-      bullets: safeState("insertUnorderedList"),
-      highlight: inHighlight()
-    });
-  };
-  const safeState = cmd => {
-    try {
-      return document.queryCommandState(cmd);
-    } catch {
-      return false;
-    }
-  };
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      if (!rect || (rect.width === 0 && rect.height === 0)) {
+        setMenuPos(null);
+        return;
+      }
+      setMenuPos({
+        top: Math.max(8, rect.top - 44),
+        left: Math.min(Math.max(rect.left + rect.width / 2, 130), window.innerWidth - 130)
+      });
+      setActiveFormats(readFormats());
+    };
+    document.addEventListener("selectionchange", onSelection);
+    return () => document.removeEventListener("selectionchange", onSelection);
+  }, []);
   const applyFormat = kind => {
-    const el = notebookRef.current;
-    if (!el) return;
-    el.focus();
     if (kind === "highlight") {
       const node = highlightNodeAt();
       if (node) {
@@ -605,22 +608,42 @@ export default function App() {
       }[kind];
       if (cmd) cmd();
     }
-    syncNotebook();
-    refreshFormats();
+    setActiveFormats(readFormats());
   };
+  const commitComposer = () => {
+    const el = composerRef.current;
+    if (!el) return;
+    if (!el.innerText.trim()) return;
+    addSavedItem({
+      type: "note",
+      html: DOMPurify.sanitize(el.innerHTML)
+    });
+    el.innerHTML = "";
+  };
+  const persistNoteHtml = (id, e) => {
+    updateSavedItem(id, {
+      html: DOMPurify.sanitize(e.currentTarget.innerHTML)
+    });
+  };
+  const stripHtml = h => {
+    const d = document.createElement("div");
+    d.innerHTML = DOMPurify.sanitize(h || "");
+    return d.innerText;
+  };
+  const noteText = it => it.html !== undefined ? stripHtml(it.html) : it.text || "";
+  const noteHtml = (it, esc) => it.html !== undefined ? `<div>${DOMPurify.sanitize(it.html)}</div>` : `<p>${esc(it.text || "")}</p>`;
   const clearNotebook = () => {
-    if (notebookRef.current) notebookRef.current.innerHTML = "";
-    setNotebook("");
     savedItems.forEach(it => {
       if (it.type === "image" && it.imgId) idbDeleteImage(it.imgId);
     });
     setSavedItems([]);
+    if (composerRef.current) composerRef.current.innerHTML = "";
   };
   const copyNotebook = () => {
     const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const itemsText = savedItems.map(it => {
       if (it.type === "image") return `[Image: ${it.name || "image"}]`;
-      if (it.type === "note") return it.text || "";
+      if (it.type === "note") return noteText(it);
       if (it.type === "quiz") {
         const opts = it.options.map((o, i) => `  ${i === it.answer ? "*" : "-"} ${o}`).join("\n");
         return `Q: ${it.question}\n${opts}`;
@@ -629,17 +652,15 @@ export default function App() {
     }).join("\n\n");
     const itemsHtml = savedItems.map(it => {
       if (it.type === "image") return it.src ? `<img src="${it.src}" alt="${esc(it.name || "image")}" />` : "";
-      if (it.type === "note") return `<p>${esc(it.text || "")}</p>`;
+      if (it.type === "note") return noteHtml(it, esc);
       if (it.type === "quiz") {
         const opts = it.options.map((o, i) => `<li>${i === it.answer ? "<strong>" : ""}${esc(o)}${i === it.answer ? "</strong>" : ""}</li>`).join("");
         return `<p><strong>Q:</strong> ${esc(it.question)}</p><ul>${opts}</ul>`;
       }
       return `${it.question ? `<p><strong>Q:</strong> ${esc(it.question)}</p>` : ""}<p>${esc(it.answer)}</p>`;
     }).join("");
-    const notesText = notebookRef.current?.innerText || "";
-    const notesHtml = DOMPurify.sanitize(notebookRef.current?.innerHTML || "");
-    const plain = [itemsText, notesText].filter(Boolean).join("\n\n");
-    const html = `<div>${itemsHtml}${notesHtml}</div>`;
+    const plain = itemsText;
+    const html = `<div>${itemsHtml}</div>`;
     try {
       if (navigator.clipboard && window.ClipboardItem) {
         const item = new window.ClipboardItem({
@@ -660,7 +681,6 @@ export default function App() {
       showToast("Copy failed");
     }
   };
-  const notebookChars = notebook.replace(/<[^>]*>/g, "").length;
   const exportPdf = () => {
     const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const itemsHtml = savedItems.map(it => {
@@ -672,13 +692,13 @@ export default function App() {
         return `<div class="item"><div class="kind">Quiz</div><p class="q">${esc(it.question)}</p><ul>${opts}</ul></div>`;
       }
       if (it.type === "note") {
-        return `<div class="item"><div class="kind">Note</div><p class="a">${esc(it.text || "")}</p></div>`;
+        const body = it.html !== undefined ? DOMPurify.sanitize(it.html) : esc(it.text || "");
+        return `<div class="item"><div class="kind">Note</div><div class="a">${body}</div></div>`;
       }
       const label = it.type === "flashcard" ? "Flashcard" : "AI Answer";
       const q = it.question ? `<p class="q">${esc(it.question)}</p>` : "";
       return `<div class="item"><div class="kind">${label}</div>${q}<p class="a">${esc(it.answer)}</p></div>`;
     }).join("");
-    const notesHtml = DOMPurify.sanitize(notebookRef.current?.innerHTML || "");
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(notebookTitle)}</title>
 <style>
   body { font-family: Georgia, "Times New Roman", serif; color: #1a1a1a; max-width: 720px; margin: 40px auto; padding: 0 24px; line-height: 1.6; }
@@ -697,7 +717,6 @@ export default function App() {
 </style></head><body>
   <h1>${esc(notebookTitle)}</h1>
   ${itemsHtml}
-  <div class="notes">${notesHtml}</div>
 </body></html>`;
     const w = window.open("", "_blank");
     if (!w) {
@@ -921,19 +940,11 @@ export default function App() {
         <section className="panel panel-notebook">
           <div className="panel-head row">
             <h2 className="panel-title">My Notebook</h2>
-            <button className="tool-btn" onClick={() => addTextBlock()}>+ Note Block</button>
             <button className="tool-btn" onClick={() => imageInputRef.current?.click()}>Insert Image</button>
             <input type="file" accept="image/*" ref={imageInputRef} onChange={onPickImage} hidden />
           </div>
           <label className="field-label">Notebook title</label>
           <input className="title-input" value={notebookTitle} onChange={e => setNotebookTitle(e.target.value)} />
-          <div className="note-toolbar">
-            <button className={activeFormats.bold ? "tool-btn on" : "tool-btn"} onMouseDown={e => e.preventDefault()} onClick={() => applyFormat("bold")}><b>Bold</b></button>
-            <button className={activeFormats.italic ? "tool-btn on" : "tool-btn"} onMouseDown={e => e.preventDefault()} onClick={() => applyFormat("italic")}><i>Italic</i></button>
-            <button className={activeFormats.highlight ? "tool-btn on" : "tool-btn"} onMouseDown={e => e.preventDefault()} onClick={() => applyFormat("highlight")}>Highlight</button>
-            <button className="tool-btn" onMouseDown={e => e.preventDefault()} onClick={() => applyFormat("clear")}>Clear Mark</button>
-            <button className={activeFormats.bullets ? "tool-btn on" : "tool-btn"} onMouseDown={e => e.preventDefault()} onClick={() => applyFormat("bullets")}>Bullets</button>
-          </div>
 
           <div className="note-scroll">
             {savedItems.length > 0 && <div className="saved-list">
@@ -952,7 +963,9 @@ export default function App() {
                         <ul className="saved-opts">
                           {it.options.map((o, i) => <li key={i} className={i === it.answer ? "right" : ""}>{o}</li>)}
                         </ul>
-                      </> : it.type === "note" ? editingId === it.id ? <textarea className="saved-edit note-edit" value={it.text} placeholder="Type a note…" autoFocus onChange={e => updateSavedItem(it.id, {
+                      </> : it.type === "note" ? it.html !== undefined ? <div className="note-editable rich-edit" contentEditable suppressContentEditableWarning role="textbox" aria-multiline="true" aria-label="Note" onPaste={handlePaste} onBlur={e => persistNoteHtml(it.id, e)} dangerouslySetInnerHTML={{
+                __html: DOMPurify.sanitize(it.html)
+              }} /> : editingId === it.id ? <textarea className="saved-edit note-edit" value={it.text} placeholder="Type a note…" autoFocus onChange={e => updateSavedItem(it.id, {
                 text: e.target.value
               })} onBlur={() => setEditingId(null)} /> : <div className="saved-rendered" onClick={() => setEditingId(it.id)}>
                           {it.text ? <MathText text={it.text} /> : <span className="saved-placeholder">Empty note — click to edit</span>}
@@ -969,15 +982,23 @@ export default function App() {
                           <div className="saved-rendered"><MathText text={it.answer} /></div>
                           <button className="link-btn" onClick={() => setEditingId(it.id)}>Edit</button>
                         </>}
-                    <button className="insert-block-btn" title="Insert a note below" onClick={() => addTextBlock(it.id)}>+ note below</button>
                   </div>)}
               </div>}
-
-            <div ref={notebookRef} className="notebook-area" contentEditable suppressContentEditableWarning role="textbox" aria-multiline="true" aria-label="Notebook" data-placeholder="Write your own notes here, or import quizzes, flashcards, answers, and images above." onInput={syncNotebook} onPaste={handlePaste} onKeyUp={refreshFormats} onMouseUp={refreshFormats} onFocus={refreshFormats} onBlur={() => setActiveFormats({})} />
+            {savedItems.length === 0 && <div className="helper-empty">
+                <span className="empty-icon">✎</span>
+                <p>No notes yet. Write below and press Enter — or save quizzes, answers, and images from the other panels.</p>
+              </div>}
           </div>
 
+          <div ref={composerRef} className="note-composer rich-edit" contentEditable suppressContentEditableWarning role="textbox" aria-multiline="true" aria-label="New note" data-placeholder="Write a note… Enter to add, Shift+Enter for a new line" onKeyDown={e => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            commitComposer();
+          }
+        }} onPaste={handlePaste} />
+
           <div className="notebook-foot">
-            <span className="meta">{savedItems.length} items · {notebookChars} chars · auto-saved</span>
+            <span className="meta">{savedItems.length} blocks · auto-saved</span>
             <div className="foot-btns">
               <button className="btn ghost sm" onClick={exportPdf}>Export PDF</button>
               <button className="btn ghost sm" onClick={copyNotebook}>Copy</button>
@@ -986,6 +1007,17 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      {menuPos && <div className="float-menu" style={{
+      top: menuPos.top,
+      left: menuPos.left
+    }} onMouseDown={e => e.preventDefault()}>
+          <button className={activeFormats.bold ? "fm-btn on" : "fm-btn"} aria-label="Bold" onClick={() => applyFormat("bold")}><b>B</b></button>
+          <button className={activeFormats.italic ? "fm-btn on" : "fm-btn"} aria-label="Italic" onClick={() => applyFormat("italic")}><i>I</i></button>
+          <button className={activeFormats.highlight ? "fm-btn on" : "fm-btn"} aria-label="Highlight" onClick={() => applyFormat("highlight")}><span className="fm-hl">A</span></button>
+          <button className={activeFormats.bullets ? "fm-btn on" : "fm-btn"} aria-label="Bulleted list" onClick={() => applyFormat("bullets")}>• List</button>
+          <button className="fm-btn" aria-label="Clear formatting" onClick={() => applyFormat("clear")}>Clear</button>
+        </div>}
 
       {lightbox && <div className="lightbox" onClick={() => setLightbox(null)}>
           <button className="lightbox-close" onClick={() => setLightbox(null)} aria-label="Close">×</button>
