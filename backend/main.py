@@ -61,6 +61,52 @@ log = logging.getLogger("pdfbuddy")
 app = FastAPI()
 # per-user state now lives in sessions (see services/rag.py); no module globals.
 
+# ---- lightweight per-IP rate limiting (in-memory, no extra deps) -----------
+# expensive endpoints get tight limits; everything else shares a loose one.
+# NOTE: X-Forwarded-For is only trustworthy behind a reverse proxy (nginx);
+# direct-to-uvicorn deployments fall back to the socket address.
+import threading as _threading
+import time as _time
+from collections import defaultdict, deque
+
+_RATE_LIMITS = {
+    "/chat": (20, 60),          # 20 requests / minute
+    "/quiz": (10, 60),
+    "/flashcards": (10, 60),
+    "/upload": (10, 600),       # 10 uploads / 10 minutes
+}
+_DEFAULT_LIMIT = (120, 60)
+_hits = defaultdict(deque)
+_hits_lock = _threading.Lock()
+
+
+# registered before CORSMiddleware is added, so CORS wraps it and 429
+# responses still carry the CORS headers the browser needs to read them
+@app.middleware("http")
+async def _rate_limit(request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    fwd = request.headers.get("x-forwarded-for", "")
+    ip = fwd.split(",")[0].strip() or (request.client.host if request.client else "unknown")
+    path = request.url.path
+    limit, window = _RATE_LIMITS.get(path, _DEFAULT_LIMIT)
+    key = (ip, path if path in _RATE_LIMITS else "*")
+    now = _time.time()
+    with _hits_lock:
+        dq = _hits[key]
+        while dq and now - dq[0] > window:
+            dq.popleft()
+        if len(dq) >= limit:
+            return JSONResponse(status_code=429,
+                                content={"error": "Too many requests — please slow down and try again shortly."})
+        dq.append(now)
+        # keep the table itself from growing without bound
+        if len(_hits) > 10000:
+            for k in [k for k, d in _hits.items() if not d]:
+                _hits.pop(k, None)
+    return await call_next(request)
+
+
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.add_middleware(
@@ -172,9 +218,10 @@ import time
 import uuid
 import threading
 
-# in-memory progress tracker: job_id -> {stage, pct, done, result/error, ts}
+# in-memory progress tracker: job_id -> {stage, pct, done, result/error, ts, sid}
 _jobs = {}
 JOB_TTL_SECONDS = 30 * 60
+MAX_ACTIVE_JOBS = 4
 
 
 def _reap_jobs():
@@ -277,25 +324,38 @@ async def upload_pdf(file: UploadFile = File(...), replace: bool = False,
 
     fname = file.filename or "document"
     sid = _sid(x_session_id)
-    # start processing in a background thread; client polls /progress/{job_id}
     _reap_jobs()
+
+    # bound concurrent PDF processing: each job holds page images and runs
+    # embeddings, so a burst of uploads must not be able to exhaust memory
+    active = sum(1 for j in _jobs.values() if not j.get("done"))
+    if active >= MAX_ACTIVE_JOBS:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        return JSONResponse(status_code=429,
+                            content={"error": "The server is busy processing other uploads. Please try again in a minute."})
+
+    # start processing in a background thread; client polls /progress/{job_id}
     job_id = uuid.uuid4().hex
     _jobs[job_id] = {"stage": "Queued", "pct": 30, "done": False, "error": None, "result": None,
-                     "ts": time.time()}
+                     "ts": time.time(), "sid": sid}
     threading.Thread(target=_process_pdf_job, args=(job_id, tmp_path, sid, fname, replace), daemon=True).start()
 
     return {"job_id": job_id}
 
 
 @app.get("/progress/{job_id}")
-def upload_progress(job_id: str):
+def upload_progress(job_id: str, x_session_id: str = Header(default=None)):
     job = _jobs.get(job_id)
-    if not job:
+    # jobs are only visible to the session that created them
+    if not job or job.get("sid") != _sid(x_session_id):
         return JSONResponse(status_code=404, content={"error": "Unknown job id."})
     if job.get("done"):
         # final state has been delivered; free the slot
         _jobs.pop(job_id, None)
-    return {k: v for k, v in job.items() if k != "ts"}
+    return {k: v for k, v in job.items() if k not in ("ts", "sid")}
 
                                                                          
 @app.post("/quiz")

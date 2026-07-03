@@ -13,6 +13,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# run as an unprivileged user; HF model cache needs a writable home
+RUN useradd --create-home appuser && chown -R appuser:appuser /app
+USER appuser
+ENV HOME=/home/appuser
+
 ENV PORT=8000
 EXPOSE 8000
 

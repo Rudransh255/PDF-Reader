@@ -145,6 +145,34 @@ function mdToHtml(src) {
     return src || "";
   }
 }
+const MATH_DELIMITERS = [{
+  left: "\\[",
+  right: "\\]",
+  display: true
+}, {
+  left: "\\(",
+  right: "\\)",
+  display: false
+}, {
+  left: "$$",
+  right: "$$",
+  display: true
+}];
+// markdown → sanitized HTML with math rendered (for print/export output);
+// falls back to raw delimiters when KaTeX hasn't loaded
+function mdBlock(src) {
+  const div = document.createElement("div");
+  div.innerHTML = DOMPurify.sanitize(mdToHtml(src || ""));
+  if (window.renderMathInElement) {
+    try {
+      window.renderMathInElement(div, {
+        delimiters: MATH_DELIMITERS,
+        throwOnError: false
+      });
+    } catch {}
+  }
+  return div.innerHTML;
+}
 function MathText({
   text
 }) {
@@ -156,19 +184,7 @@ function MathText({
     if (window.renderMathInElement) {
       try {
         window.renderMathInElement(el, {
-          delimiters: [{
-            left: "\\[",
-            right: "\\]",
-            display: true
-          }, {
-            left: "\\(",
-            right: "\\)",
-            display: false
-          }, {
-            left: "$$",
-            right: "$$",
-            display: true
-          }],
+          delimiters: MATH_DELIMITERS,
           throwOnError: false
         });
       } catch {}
@@ -639,6 +655,33 @@ export default function App() {
     setSavedItems([]);
     if (composerRef.current) composerRef.current.innerHTML = "";
   };
+  // copy rich HTML through a real DOM selection: unlike the async clipboard
+  // API, this preserves large data-URL images, which Chromium silently strips
+  // or rejects when written via ClipboardItem
+  const copyViaSelection = html => {
+    const holder = document.createElement("div");
+    holder.setAttribute("contenteditable", "true");
+    holder.style.cssText = "position:fixed;left:-99999px;top:0;opacity:0;pointer-events:none;";
+    holder.innerHTML = html;
+    document.body.appendChild(holder);
+    const sel = window.getSelection();
+    const prevRanges = [];
+    for (let i = 0; i < (sel?.rangeCount || 0); i++) prevRanges.push(sel.getRangeAt(i));
+    let ok;
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(holder);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    sel?.removeAllRanges();
+    prevRanges.forEach(r => sel.addRange(r));
+    holder.remove();
+    return ok;
+  };
   const copyNotebook = () => {
     const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const itemsText = savedItems.map(it => {
@@ -661,7 +704,17 @@ export default function App() {
     }).join("");
     const plain = itemsText;
     const html = `<div>${itemsHtml}</div>`;
+    if (savedItems.length === 0) {
+      showToast("Notebook is empty — nothing to copy");
+      return;
+    }
+    const hasImages = savedItems.some(it => it.type === "image" && it.src);
     try {
+      // images only survive the selection-based copy; use it whenever present
+      if (hasImages && copyViaSelection(html)) {
+        showToast("Copied (with images)");
+        return;
+      }
       if (navigator.clipboard && window.ClipboardItem) {
         const item = new window.ClipboardItem({
           "text/html": new Blob([html], {
@@ -671,7 +724,9 @@ export default function App() {
             type: "text/plain"
           })
         });
-        navigator.clipboard.write([item]).then(() => showToast("Copied (with images)"), () => navigator.clipboard.writeText(plain).then(() => showToast("Copied as text"), () => showToast("Copy failed")));
+        navigator.clipboard.write([item]).then(() => showToast(hasImages ? "Copied — images may be dropped by this browser" : "Copied to clipboard"), () => navigator.clipboard.writeText(plain).then(() => showToast("Copied as text"), () => showToast("Copy failed")));
+      } else if (copyViaSelection(html)) {
+        showToast("Copied to clipboard");
       } else if (navigator.clipboard?.writeText) {
         navigator.clipboard.writeText(plain).then(() => showToast("Copied to clipboard"), () => showToast("Copy failed"));
       } else {
@@ -682,51 +737,86 @@ export default function App() {
     }
   };
   const exportPdf = () => {
+    if (savedItems.length === 0) {
+      showToast("Notebook is empty — nothing to export");
+      return;
+    }
     const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const itemsHtml = savedItems.map(it => {
       if (it.type === "image") {
-        return it.src ? `<div class="item"><div class="kind">Image</div><img src="${it.src}" /></div>` : "";
+        return it.src ? `<div class="item"><div class="kind">Image</div><img src="${it.src}" alt="${esc(it.name || "image")}" /></div>` : "";
       }
       if (it.type === "quiz") {
         const opts = it.options.map((o, i) => `<li class="${i === it.answer ? "right" : ""}">${esc(o)}</li>`).join("");
         return `<div class="item"><div class="kind">Quiz</div><p class="q">${esc(it.question)}</p><ul>${opts}</ul></div>`;
       }
       if (it.type === "note") {
-        const body = it.html !== undefined ? DOMPurify.sanitize(it.html) : esc(it.text || "");
+        const body = it.html !== undefined ? DOMPurify.sanitize(it.html) : mdBlock(it.text);
         return `<div class="item"><div class="kind">Note</div><div class="a">${body}</div></div>`;
       }
       const label = it.type === "flashcard" ? "Flashcard" : "AI Answer";
       const q = it.question ? `<p class="q">${esc(it.question)}</p>` : "";
-      return `<div class="item"><div class="kind">${label}</div>${q}<p class="a">${esc(it.answer)}</p></div>`;
+      return `<div class="item"><div class="kind">${label}</div>${q}<div class="a">${mdBlock(it.answer)}</div></div>`;
     }).join("");
+    const today = new Date().toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "long",
+      day: "numeric"
+    });
+    const katexCss = itemsHtml.includes('class="katex') ? '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous" />' : "";
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(notebookTitle)}</title>
-<style>
+${katexCss}<style>
+  @page { margin: 18mm 16mm; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { font-family: Georgia, "Times New Roman", serif; color: #1a1a1a; max-width: 720px; margin: 40px auto; padding: 0 24px; line-height: 1.6; }
-  h1 { font-size: 26px; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 24px; }
-  .item { border: 1px solid #ccc; border-radius: 8px; padding: 12px 14px; margin: 0 0 14px; page-break-inside: avoid; }
+  h1 { font-size: 26px; border-bottom: 3px double #1a1a1a; padding-bottom: 10px; margin: 0 0 6px; }
+  .subtitle { font-size: 12px; color: #666; margin: 0 0 24px; }
+  .item { border: 1px solid #ccc; border-radius: 8px; padding: 12px 16px; margin: 0 0 14px; page-break-inside: avoid; break-inside: avoid; }
   .kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #666; margin-bottom: 6px; }
   .q { font-weight: bold; margin: 0 0 6px; }
-  .a { margin: 0; white-space: pre-wrap; }
+  .a { margin: 0; }
+  .a p { margin: 0 0 8px; }
+  .a p:last-child { margin-bottom: 0; }
+  .a ul, .a ol { margin: 6px 0; padding-left: 20px; }
+  .a pre { background: #f4f2ea; border: 1px solid #ddd; border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; }
+  .a code { font-family: Menlo, Consolas, monospace; font-size: 0.92em; }
+  .a blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid #bbb; color: #555; }
+  .katex-display { margin: 8px 0; }
   ul { margin: 6px 0 0; padding-left: 20px; }
   li.right { font-weight: bold; }
-  li.right::after { content: " ✓"; color: #1a7f37; }
+  li.right::after { content: " \\2713"; color: #1a7f37; }
   img { max-width: 100%; border-radius: 6px; }
   mark { background: #fff3a3; }
-  .notes { margin-top: 20px; white-space: pre-wrap; }
-  @media print { body { margin: 0; } }
+  [style*="background"] { padding: 0 2px; border-radius: 2px; }
+  @media print { body { margin: 0; max-width: none; } }
 </style></head><body>
   <h1>${esc(notebookTitle)}</h1>
+  <p class="subtitle">${savedItems.length} block${savedItems.length === 1 ? "" : "s"} · exported ${esc(today)}</p>
   ${itemsHtml}
 </body></html>`;
-    const w = window.open("", "_blank");
-    if (!w) {
-      alert("Please allow popups to export the notebook as PDF.");
-      return;
-    }
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    w.onload = () => setTimeout(() => w.print(), 300);
+    // print from a hidden same-origin iframe: popup blockers can't interfere,
+    // and the load event fires only after images/stylesheets are ready
+    const frame = document.createElement("iframe");
+    frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+    frame.setAttribute("aria-hidden", "true");
+    document.body.appendChild(frame);
+    const cleanup = () => {
+      if (frame.parentNode) frame.remove();
+    };
+    frame.onload = () => {
+      try {
+        frame.contentWindow.onafterprint = cleanup;
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+      } catch {
+        showToast("Could not open the print dialog");
+        cleanup();
+        return;
+      }
+      // fallback for browsers that never fire afterprint on iframes
+      setTimeout(cleanup, 120000);
+    };
+    frame.srcdoc = html;
   };
   const pickOption = (qkey, oi) => {
     if (picked[qkey] !== undefined) return;
