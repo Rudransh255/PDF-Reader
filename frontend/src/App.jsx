@@ -242,6 +242,26 @@ export default function App() {
       behavior: "smooth"
     });
   }, [chat, chatLoading]);
+  useEffect(() => {
+    // the backend session outlives a page refresh: restore its document list
+    // so the UI matches what the server will actually answer from
+    (async () => {
+      try {
+        const r = await fetch(`${API}/documents`, withSession());
+        if (!r.ok) return;
+        const data = await r.json();
+        if (data.documents?.length) {
+          setDocs(data.documents);
+          setPdfLoaded(true);
+          if (data.total_pages) setPageCount(data.total_pages);
+          setUploadStatus(data.documents.length === 1
+            ? `${data.documents[0]} · restored from your session`
+            : `${data.documents.length} documents · restored from your session`);
+          setStaleChat(false);
+        }
+      } catch {}
+    })();
+  }, []);
   const [lightbox, setLightbox] = useState(null);
   useEffect(() => {
     try {
@@ -363,7 +383,7 @@ export default function App() {
         poll();
       });
       setPdfLoaded(true);
-      if (data.pages) setPageCount(data.pages);
+      if (data.total_pages || data.pages) setPageCount(data.total_pages || data.pages);
       if (data.documents) setDocs(data.documents);
       const count = data.documents?.length || 1;
       let note = count > 1 ? `${count} documents loaded · added ${theFile.name}` : `${theFile.name} loaded · ${data.characters ?? 0} characters`;

@@ -28,6 +28,7 @@ class Session:
         self.sources = []
         self.documents = []
         self.document_text = ""
+        self.total_pages = 0
         self.chat_history = []
         self.last_seen = time.time()
 
@@ -40,6 +41,7 @@ class Session:
         self.sources = []
         self.documents = []
         self.document_text = ""
+        self.total_pages = 0
 
     def add_document(self, chunks, source="document"):
         if not chunks:

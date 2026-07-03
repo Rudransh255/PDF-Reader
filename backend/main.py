@@ -256,12 +256,14 @@ def _process_pdf_job(job_id, tmp_path, session_id, filename="document", replace=
         if replace:
             sess.reset_index()
         sess.add_document(chunks, source=filename)
+        sess.total_pages += result["pages"]
 
         _jobs[job_id].update({
             "stage": "Done", "pct": 100, "done": True, "error": None,
             "result": {
                 "characters": len(sess.document_text),
                 "pages": result["pages"],
+                "total_pages": sess.total_pages,
                 "method": result["method"],
                 "ocr_pages": result.get("ocr_pages", 0),
                 "warning": result.get("warning"),
@@ -527,7 +529,7 @@ def reset_chat(x_session_id: str = Header(default=None)):
 def get_documents(x_session_id: str = Header(default=None)):
     """List the documents in this session's knowledge base."""
     sess = get_session(_sid(x_session_id))
-    return {"documents": sess.list_documents()}
+    return {"documents": sess.list_documents(), "total_pages": sess.total_pages}
 
 
 @app.post("/clear_documents")
