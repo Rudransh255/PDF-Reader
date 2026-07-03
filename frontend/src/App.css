@@ -222,7 +222,7 @@
   justify-content: center; gap: 10px; border: 1px solid var(--line);
 }
 .flash-face.front { background: var(--field); }
-.flash-face.back { background: #eef2e6; border-color: #c4cfb0; }
+.flash-face.back { background: #eef2e6; border-color: #c4cfb0; transform: rotateY(180deg); }
 .flash-face p {
   margin: 0; color: var(--text-hi); font-size: 15px; line-height: 1.45;
   font-family: var(--serif); overflow-y: auto; min-height: 0;
