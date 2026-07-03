@@ -205,6 +205,29 @@ def _clean_questions(items):
     return out
 
 
+def _extract_sources_used(reply, known_sources):
+    """Pull the trailing 'SOURCES_USED: ...' line off an LLM reply.
+
+    Returns (cleaned_reply, used_list). used_list is None when the trailer is
+    missing/unparseable (caller falls back to the retrieved-source list), and
+    may be [] when the model states it used none."""
+    if not reply:
+        return reply, None
+    lines = reply.rstrip().splitlines()
+    # the trailer should be the last line, but tolerate one stray blank/extra line
+    for i in range(len(lines) - 1, max(len(lines) - 3, -1), -1):
+        m = re.match(r"\s*\**\s*sources?[_ ]used\s*\**\s*[::]\s*(.+)", lines[i], re.IGNORECASE)
+        if not m:
+            continue
+        tail = m.group(1).lower()
+        cleaned = "\n".join(lines[:i]).rstrip()
+        if not cleaned:          # model sent only the trailer; keep original
+            return reply, None
+        used = [s for s in known_sources if s.lower() in tail]
+        return cleaned, used
+    return reply, None
+
+
 def _clean_cards(items):
     out = []
     for c in items if isinstance(items, list) else []:
@@ -496,6 +519,11 @@ Guidelines:
 - Reply in the SAME language the user wrote their latest message in.
 - If the answer is not in the context, say so plainly instead of guessing.
 {f"- The user directed this question at: {', '.join(focus_docs)} (referenced with @ in their message). The context contains only those documents; answer from them." if focus_docs else ""}
+- After your answer, add ONE final line, exactly in this form (it is removed
+  before display, so never mention it in the answer itself):
+  SOURCES_USED: <comma-separated filenames of the documents your answer actually drew from>
+  Only list filenames that appear in the "[from: ...]" labels, and only those
+  you truly used. If you used none, write: SOURCES_USED: none
 - For mathematical expressions, use LaTeX: inline math in \\( ... \\) and block
   equations in \\[ ... \\].
 
@@ -512,9 +540,14 @@ Document context:
         log.error("LLM call failed in /chat: %s", e)
         return {"reply": "The AI service is temporarily unavailable. Please try again in a moment.", "sources": source_names}
 
+    # strip the SOURCES_USED trailer and use it to attribute the answer to the
+    # documents actually used, not everything retrieval happened to surface
+    reply, used = _extract_sources_used(reply, source_names)
+    final_sources = used if used is not None else source_names
+
     sess.chat_history.append({"role": "assistant", "content": reply})
 
-    return {"reply": reply, "sources": source_names}
+    return {"reply": reply, "sources": final_sources}
 
 
 @app.post("/reset_chat")
