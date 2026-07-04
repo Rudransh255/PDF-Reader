@@ -1112,7 +1112,10 @@ ${katexCss}<style>
                     <circle cx="15" cy="10" r="1.1" fill="currentColor" />
                   </svg>
                 </span>
-                <p>Ask about the active PDF and the assistant will answer from retrieved passages.</p>
+                {pdfLoaded ? <p>Ask anything about your PDF — answers come straight from its pages.</p> : <>
+                    <p>Upload a PDF first — then ask it anything here.</p>
+                    <button className="btn primary sm" onClick={() => pdfInputRef.current?.click()}>Upload PDF</button>
+                  </>}
               </div>}
             {chat.map((m, i) => <div key={i} className={m.role === "user" ? "bubble user" : "bubble bot"}>
                 <MathText text={m.content} />
