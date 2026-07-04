@@ -139,6 +139,31 @@
 .btn.sm { padding: 7px 12px; font-size: 12px; }
 .btn.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
 
+/* first-visit call to action: draw the eye to Upload until a PDF is loaded */
+.btn.attention {
+  background: var(--accent); border-color: var(--accent);
+  animation: attention-pulse 2s ease-in-out infinite;
+}
+.btn.attention:hover:not(:disabled) { background: var(--accent-2); }
+@keyframes attention-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(47, 107, 78, 0.45); }
+  55% { box-shadow: 0 0 0 9px rgba(47, 107, 78, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.attention { animation: none; }
+}
+
+.privacy-note {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  flex: none; /* keeps its height inside the fixed mobile app shell */
+  background: var(--field); border: 1px solid var(--line-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 16px;
+}
+.privacy-note p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--text-dim); }
+.privacy-note strong { color: var(--text-hi); }
+.privacy-note .btn { flex: none; }
+
 .columns {
   display: grid; grid-template-columns: 0.9fr 1.7fr 1fr; gap: 18px;
   align-items: stretch;

@@ -216,6 +216,19 @@ export default function App() {
     });
   };
   const [message, setMessage] = useState("");
+  const [privacyOk, setPrivacyOk] = useState(() => {
+    try {
+      return localStorage.getItem("pdfBuddyPrivacyOk") === "1";
+    } catch {
+      return true;
+    }
+  });
+  const dismissPrivacy = () => {
+    setPrivacyOk(true);
+    try {
+      localStorage.setItem("pdfBuddyPrivacyOk", "1");
+    } catch {}
+  };
   const [toast, setToast] = useState("");
   const showToast = msg => {
     setToast(msg);
@@ -953,12 +966,19 @@ ${katexCss}<style>
             uploadPdf(f);
           }
         }} />
-          <button className="btn primary" onClick={() => pdfInputRef.current?.click()} disabled={uploadPct !== null}>
+          <button className={docs.length === 0 && uploadPct === null ? "btn primary attention" : "btn primary"} onClick={() => pdfInputRef.current?.click()} disabled={uploadPct !== null}>
             {uploadPct !== null ? <><span className="btn-spinner" />Uploading {uploadPct}%</> : docs.length > 0 ? "+ Add PDF" : "Upload PDF"}
           </button>
           <button className="btn ghost" onClick={reset}>Reset</button>
         </div>
       </header>
+
+      {!privacyOk && <div className="privacy-note" role="note">
+          <p>
+            <strong>Where your data lives:</strong> uploaded PDFs are indexed in server memory only — never written to disk — and are deleted after ~1 hour of inactivity or when you press Reset. Excerpts of your documents are sent to Groq (the AI provider) to answer your questions. Your notes, chat history, and images stay in this browser.
+          </p>
+          <button className="btn sm" onClick={dismissPrivacy}>Got it</button>
+        </div>}
 
       <nav className="mobile-nav">
         <button className={mobileView === "helper" ? "mnav on" : "mnav"} onClick={() => setMobileView("helper")}>Helper</button>
